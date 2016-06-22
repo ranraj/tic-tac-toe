@@ -1,8 +1,11 @@
 # Tic-tac-toe
-  This is project is a use case to practice typed functional language.  Language : Elm-lang
+  This is project is a use case to practice typed functional language. 
+  
+  Language : Elm-lang
+  
   Required : Elm - [Installation guidence](http://elm-lang.org/install)
   
-  Online [Demo](http://yaliprowess.com)
+  **Online** [Demo](http://yaliprowess.com)
 
 How to Execute TciTacToe application ?
 
