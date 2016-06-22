@@ -1,6 +1,6 @@
 # tic-tac-toe
   This is project is a use case to practice typed functional language.  Language : Elm-lang
-  Online [Demo][!http://yaliprowess.com/] 
+  Online [Demo](http://yaliprowess.com)
 
 How to Execute TciTacToe application ?
 
