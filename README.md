@@ -13,8 +13,6 @@ How to Execute TciTacToe application ?
 
     Install Dependency
 
-    Get in to the project directory.
-
     Dependency installation
 
     Execute the elm package install and it will prompt your permission to download the dependency. Type y and Hit.
