@@ -16385,6 +16385,9 @@ var _user$project$Main$mapCellToTile = F3(
 		var times = (size / 100) | 0;
 		var xVal = _elm_lang$core$Basics$fst(cell.position) * size;
 		var yVal = _elm_lang$core$Basics$snd(cell.position) * size;
+		var circleSize = (size / 2) | 0;
+		var crossSize = (size / 4) | 0;
+		var symbolWidth = (size / 6) | 0;
 		var w = screenSize.width;
 		var h = screenSize.height;
 		var _p11 = cell;
@@ -16443,11 +16446,11 @@ var _user$project$Main$mapCellToTile = F3(
 									_user$project$Main$Played(position)),
 									_elm_lang$svg$Svg_Attributes$fill(_user$project$MyStyle$symbolColor),
 									_elm_lang$svg$Svg_Attributes$cx(
-									_elm_lang$core$Basics$toString((xVal + ((size / 2) | 0)) + times)),
+									_elm_lang$core$Basics$toString((xVal + circleSize) + times)),
 									_elm_lang$svg$Svg_Attributes$cy(
-									_elm_lang$core$Basics$toString((yVal + ((size / 2) | 0)) + times)),
+									_elm_lang$core$Basics$toString((yVal + circleSize) + times)),
 									_elm_lang$svg$Svg_Attributes$r(
-									_elm_lang$core$Basics$toString(50 + times))
+									_elm_lang$core$Basics$toString((symbolWidth * 2) + times))
 								]),
 							_elm_lang$core$Native_List.fromArray(
 								[])),
@@ -16461,11 +16464,11 @@ var _user$project$Main$mapCellToTile = F3(
 									_user$project$Main$Played(position)),
 									_elm_lang$svg$Svg_Attributes$fill(boardBgColor),
 									_elm_lang$svg$Svg_Attributes$cx(
-									_elm_lang$core$Basics$toString((xVal + ((size / 2) | 0)) + times)),
+									_elm_lang$core$Basics$toString((xVal + circleSize) + times)),
 									_elm_lang$svg$Svg_Attributes$cy(
-									_elm_lang$core$Basics$toString((yVal + ((size / 2) | 0)) + times)),
+									_elm_lang$core$Basics$toString((yVal + circleSize) + times)),
 									_elm_lang$svg$Svg_Attributes$r(
-									_elm_lang$core$Basics$toString(30 + times))
+									_elm_lang$core$Basics$toString(symbolWidth + times))
 								]),
 							_elm_lang$core$Native_List.fromArray(
 								[]))
@@ -16512,16 +16515,16 @@ var _user$project$Main$mapCellToTile = F3(
 									_elm_lang$html$Html_Events$onClick(
 									_user$project$Main$Played(position)),
 									_elm_lang$svg$Svg_Attributes$x1(
-									_elm_lang$core$Basics$toString(xVal + ((size / 5) | 0))),
+									_elm_lang$core$Basics$toString(xVal + crossSize)),
 									_elm_lang$svg$Svg_Attributes$y1(
-									_elm_lang$core$Basics$toString(yVal + ((size / 5) | 0))),
+									_elm_lang$core$Basics$toString(yVal + crossSize)),
 									_elm_lang$svg$Svg_Attributes$x2(
-									_elm_lang$core$Basics$toString(xVal + (size - 30))),
+									_elm_lang$core$Basics$toString(xVal + (size - crossSize))),
 									_elm_lang$svg$Svg_Attributes$y2(
-									_elm_lang$core$Basics$toString(yVal + (size - 30))),
+									_elm_lang$core$Basics$toString(yVal + (size - crossSize))),
 									_elm_lang$svg$Svg_Attributes$stroke(_user$project$MyStyle$symbolColor),
 									_elm_lang$svg$Svg_Attributes$strokeWidth(
-									_elm_lang$core$Basics$toString(_user$project$MyStyle$strokeWidthSize))
+									_elm_lang$core$Basics$toString(symbolWidth))
 								]),
 							_elm_lang$core$Native_List.fromArray(
 								[])),
@@ -16534,16 +16537,16 @@ var _user$project$Main$mapCellToTile = F3(
 									_elm_lang$html$Html_Events$onClick(
 									_user$project$Main$Played(position)),
 									_elm_lang$svg$Svg_Attributes$x1(
-									_elm_lang$core$Basics$toString(xVal + ((size / 5) | 0))),
+									_elm_lang$core$Basics$toString(xVal + crossSize)),
 									_elm_lang$svg$Svg_Attributes$y1(
-									_elm_lang$core$Basics$toString(yVal + (size - 30))),
+									_elm_lang$core$Basics$toString(yVal + (size - crossSize))),
 									_elm_lang$svg$Svg_Attributes$x2(
-									_elm_lang$core$Basics$toString(xVal + (size - 30))),
+									_elm_lang$core$Basics$toString(xVal + (size - crossSize))),
 									_elm_lang$svg$Svg_Attributes$y2(
-									_elm_lang$core$Basics$toString(yVal + ((size / 5) | 0))),
+									_elm_lang$core$Basics$toString(yVal + crossSize)),
 									_elm_lang$svg$Svg_Attributes$stroke(_user$project$MyStyle$symbolColor),
 									_elm_lang$svg$Svg_Attributes$strokeWidth(
-									_elm_lang$core$Basics$toString(_user$project$MyStyle$strokeWidthSize))
+									_elm_lang$core$Basics$toString(symbolWidth))
 								]),
 							_elm_lang$core$Native_List.fromArray(
 								[]))

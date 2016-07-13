@@ -1,0 +1,4 @@
+[0m[[0mdebug[0m] [0mCopy resource mappings: [0m
+[0m[[0mdebug[0m] [0m	(/home/ranjithrajd/rspace/project/pet/tic-tac-toe/tictactoe-service/src/main/resources/web,/home/ranjithrajd/rspace/project/pet/tic-tac-toe/tictactoe-service/target/scala-2.11/classes/web)[0m
+[0m[[0mdebug[0m] [0m	(/home/ranjithrajd/rspace/project/pet/tic-tac-toe/tictactoe-service/src/main/resources/application.conf,/home/ranjithrajd/rspace/project/pet/tic-tac-toe/tictactoe-service/target/scala-2.11/classes/application.conf)[0m
+[0m[[0mdebug[0m] [0m	(/home/ranjithrajd/rspace/project/pet/tic-tac-toe/tictactoe-service/src/main/resources/web/index.html,/home/ranjithrajd/rspace/project/pet/tic-tac-toe/tictactoe-service/target/scala-2.11/classes/web/index.html)[0m
