@@ -6565,6 +6565,34 @@ function nodeHelp(tag, factList, kidList)
 }
 
 
+function keyedNode(tag, factList, kidList)
+{
+	var organized = organizeFacts(factList);
+	var namespace = organized.namespace;
+	var facts = organized.facts;
+
+	var children = [];
+	var descendantsCount = 0;
+	while (kidList.ctor !== '[]')
+	{
+		var kid = kidList._0;
+		descendantsCount += (kid._1.descendantsCount || 0);
+		children.push(kid);
+		kidList = kidList._1;
+	}
+	descendantsCount += children.length;
+
+	return {
+		type: 'keyed-node',
+		tag: tag,
+		facts: facts,
+		children: children,
+		namespace: namespace,
+		descendantsCount: descendantsCount
+	};
+}
+
+
 function custom(factList, model, impl)
 {
 	var facts = organizeFacts(factList).facts;
@@ -6596,7 +6624,7 @@ function thunk(func, args, thunk)
 		func: func,
 		args: args,
 		thunk: thunk,
-		node: null
+		node: undefined
 	};
 }
 
@@ -6748,7 +6776,7 @@ function equalEvents(a, b)
 
 function renderer(parent, tagger, initialVirtualNode)
 {
-	var eventNode = { tagger: tagger, parent: null };
+	var eventNode = { tagger: tagger, parent: undefined };
 
 	var domNode = render(initialVirtualNode, eventNode);
 	parent.appendChild(domNode);
@@ -6821,7 +6849,7 @@ function render(vNode, eventNode)
 		case 'tagger':
 			var subNode = vNode.node;
 			var tagger = vNode.tagger;
-		
+
 			while (subNode.type === 'tagger')
 			{
 				typeof tagger !== 'object'
@@ -6830,12 +6858,12 @@ function render(vNode, eventNode)
 
 				subNode = subNode.node;
 			}
-            
+
 			var subEventRoot = {
 				tagger: tagger,
 				parent: eventNode
 			};
-			
+
 			var domNode = render(subNode, subEventRoot);
 			domNode.elm_event_node_ref = subEventRoot;
 			return domNode;
@@ -6855,6 +6883,22 @@ function render(vNode, eventNode)
 			for (var i = 0; i < children.length; i++)
 			{
 				domNode.appendChild(render(children[i], eventNode));
+			}
+
+			return domNode;
+
+		case 'keyed-node':
+			var domNode = vNode.namespace
+				? document.createElementNS(vNode.namespace, vNode.tag)
+				: document.createElement(vNode.tag);
+
+			applyFacts(domNode, eventNode, vNode.facts);
+
+			var children = vNode.children;
+
+			for (var i = 0; i < children.length; i++)
+			{
+				domNode.appendChild(render(children[i]._1, eventNode));
 			}
 
 			return domNode;
@@ -7049,8 +7093,8 @@ function makePatch(type, index, data)
 		index: index,
 		type: type,
 		data: data,
-		domNode: null,
-		eventNode: null
+		domNode: undefined,
+		eventNode: undefined
 	};
 }
 
@@ -7175,6 +7219,25 @@ function diffHelp(a, b, patches, index)
 			diffChildren(a, b, patches, index);
 			return;
 
+		case 'keyed-node':
+			// Bail if obvious indicators have changed. Implies more serious
+			// structural changes such that it's not worth it to diff.
+			if (a.tag !== b.tag || a.namespace !== b.namespace)
+			{
+				patches.push(makePatch('p-redraw', index, b));
+				return;
+			}
+
+			var factsDiff = diffFacts(a.facts, b.facts);
+
+			if (typeof factsDiff !== 'undefined')
+			{
+				patches.push(makePatch('p-facts', index, factsDiff));
+			}
+
+			diffKeyedChildren(a, b, patches, index);
+			return;
+
 		case 'custom':
 			if (a.impl !== b.impl)
 			{
@@ -7295,11 +7358,11 @@ function diffChildren(aParent, bParent, patches, rootIndex)
 
 	if (aLen > bLen)
 	{
-		patches.push(makePatch('p-remove', rootIndex, aLen - bLen));
+		patches.push(makePatch('p-remove-last', rootIndex, aLen - bLen));
 	}
 	else if (aLen < bLen)
 	{
-		patches.push(makePatch('p-insert', rootIndex, bChildren.slice(aLen)));
+		patches.push(makePatch('p-append', rootIndex, bChildren.slice(aLen)));
 	}
 
 	// PAIRWISE DIFF EVERYTHING ELSE
@@ -7313,6 +7376,260 @@ function diffChildren(aParent, bParent, patches, rootIndex)
 		diffHelp(aChild, bChildren[i], patches, index);
 		index += aChild.descendantsCount || 0;
 	}
+}
+
+
+
+////////////  KEYED DIFF  ////////////
+
+
+function diffKeyedChildren(aParent, bParent, patches, rootIndex)
+{
+	var localPatches = [];
+
+	var changes = {}; // Dict String Entry
+	var inserts = []; // Array { index : Int, entry : Entry }
+	// type Entry = { tag : String, vnode : VNode, index : Int, data : _ }
+
+	var aChildren = aParent.children;
+	var bChildren = bParent.children;
+	var aLen = aChildren.length;
+	var bLen = bChildren.length;
+	var aIndex = 0;
+	var bIndex = 0;
+
+	var index = rootIndex;
+
+	while (aIndex < aLen && bIndex < bLen)
+	{
+		var a = aChildren[aIndex];
+		var b = bChildren[bIndex];
+
+		var aKey = a._0;
+		var bKey = b._0;
+		var aNode = a._1;
+		var bNode = b._1;
+
+		// check if keys match
+
+		if (aKey === bKey)
+		{
+			index++;
+			diffHelp(aNode, bNode, localPatches, index);
+			index += aNode.descendantsCount || 0;
+
+			aIndex++;
+			bIndex++;
+			continue;
+		}
+
+		// look ahead 1 to detect insertions and removals.
+
+		var aLookAhead = aIndex + 1 < aLen;
+		var bLookAhead = bIndex + 1 < bLen;
+
+		if (aLookAhead)
+		{
+			var aNext = aChildren[aIndex + 1];
+			var aNextKey = aNext._0;
+			var aNextNode = aNext._1;
+			var oldMatch = bKey === aNextKey;
+		}
+
+		if (bLookAhead)
+		{
+			var bNext = bChildren[bIndex + 1];
+			var bNextKey = bNext._0;
+			var bNextNode = bNext._1;
+			var newMatch = aKey === bNextKey;
+		}
+
+
+		// swap a and b
+		if (aLookAhead && bLookAhead && newMatch && oldMatch)
+		{
+			index++;
+			diffHelp(aNode, bNextNode, localPatches, index);
+			insertNode(changes, localPatches, aKey, bNode, bIndex, inserts);
+			index += aNode.descendantsCount || 0;
+
+			index++;
+			removeNode(changes, localPatches, aKey, aNextNode, index);
+			index += aNextNode.descendantsCount || 0;
+
+			aIndex += 2;
+			bIndex += 2;
+			continue;
+		}
+
+		// insert b
+		if (bLookAhead && newMatch)
+		{
+			index++;
+			insertNode(changes, localPatches, bKey, bNode, bIndex, inserts);
+			diffHelp(aNode, bNextNode, localPatches, index);
+			index += aNode.descendantsCount || 0;
+
+			aIndex += 1;
+			bIndex += 2;
+			continue;
+		}
+
+		// remove a
+		if (aLookAhead && oldMatch)
+		{
+			index++;
+			removeNode(changes, localPatches, aKey, aNode, index);
+			index += aNode.descendantsCount || 0;
+
+			index++;
+			diffHelp(aNextNode, bNode, localPatches, index);
+			index += aNextNode.descendantsCount || 0;
+
+			aIndex += 2;
+			bIndex += 1;
+			continue;
+		}
+
+		// remove a, insert b
+		if (aLookAhead && bLookAhead && aNextKey === bNextKey)
+		{
+			index++;
+			removeNode(changes, localPatches, aKey, aNode, index);
+			insertNode(changes, localPatches, bKey, bNode, bIndex, inserts);
+			index += aNode.descendantsCount || 0;
+
+			index++;
+			diffHelp(aNextNode, bNextNode, localPatches, index);
+			index += aNextNode.descendantsCount || 0;
+
+			aIndex += 2;
+			bIndex += 2;
+			continue;
+		}
+
+		break;
+	}
+
+	// eat up any remaining nodes with removeNode and insertNode
+
+	while (aIndex < aLen)
+	{
+		index++;
+		var a = aChildren[aIndex];
+		var aNode = a._1;
+		removeNode(changes, localPatches, a._0, aNode, index);
+		index += aNode.descendantsCount || 0;
+		aIndex++;
+	}
+
+	var endInserts;
+	while (bIndex < bLen)
+	{
+		endInserts = endInserts || [];
+		var b = bChildren[bIndex];
+		insertNode(changes, localPatches, b._0, b._1, undefined, endInserts);
+		bIndex++;
+	}
+
+	if (localPatches.length > 0 || inserts.length > 0 || typeof endInserts !== 'undefined')
+	{
+		patches.push(makePatch('p-reorder', rootIndex, {
+			patches: localPatches,
+			inserts: inserts,
+			endInserts: endInserts
+		}));
+	}
+}
+
+
+
+////////////  CHANGES FROM KEYED DIFF  ////////////
+
+
+var POSTFIX = '_elmW6BL';
+
+
+function insertNode(changes, localPatches, key, vnode, bIndex, inserts)
+{
+	var entry = changes[key];
+
+	// never seen this key before
+	if (typeof entry === 'undefined')
+	{
+		entry = {
+			tag: 'insert',
+			vnode: vnode,
+			index: bIndex,
+			data: undefined
+		};
+
+		inserts.push({ index: bIndex, entry: entry });
+		changes[key] = entry;
+
+		return;
+	}
+
+	// this key was removed earlier, a match!
+	if (entry.tag === 'remove')
+	{
+		inserts.push({ index: bIndex, entry: entry });
+
+		entry.tag = 'move';
+		var subPatches = [];
+		diffHelp(entry.vnode, vnode, subPatches, entry.index);
+		entry.index = bIndex;
+		entry.data.data = {
+			patches: subPatches,
+			entry: entry
+		};
+
+		return;
+	}
+
+	// this key has already been inserted or moved, a duplicate!
+	insertNode(changes, localPatches, key + POSTFIX, vnode, bIndex, inserts);
+}
+
+
+function removeNode(changes, localPatches, key, vnode, index)
+{
+	var entry = changes[key];
+
+	// never seen this key before
+	if (typeof entry === 'undefined')
+	{
+		var patch = makePatch('p-remove', index, undefined);
+		localPatches.push(patch);
+
+		changes[key] = {
+			tag: 'remove',
+			vnode: vnode,
+			index: index,
+			data: patch
+		};
+
+		return;
+	}
+
+	// this key was inserted earlier, a match!
+	if (entry.tag === 'insert')
+	{
+		entry.tag = 'move';
+		var subPatches = [];
+		diffHelp(vnode, entry.vnode, subPatches, index);
+
+		var patch = makePatch('p-remove', index, {
+			patches: subPatches,
+			entry: entry
+		});
+		localPatches.push(patch);
+
+		return;
+	}
+
+	// this key has already been removed or moved, a duplicate!
+	removeNode(changes, localPatches, key + POSTFIX, vnode, index);
 }
 
 
@@ -7345,6 +7662,33 @@ function addDomNodesHelp(domNode, vNode, patches, i, low, high, eventNode)
 		{
 			addDomNodes(domNode, vNode.node, patch.data, eventNode);
 		}
+		else if (patchType === 'p-reorder')
+		{
+			patch.domNode = domNode;
+			patch.eventNode = eventNode;
+
+			var subPatches = patch.data.patches;
+			if (subPatches.length > 0)
+			{
+				addDomNodesHelp(domNode, vNode, subPatches, 0, low, high, eventNode);
+			}
+		}
+		else if (patchType === 'p-remove')
+		{
+			patch.domNode = domNode;
+			patch.eventNode = eventNode;
+
+			var data = patch.data;
+			if (typeof data !== 'undefined')
+			{
+				data.entry.data = domNode;
+				var subPatches = data.patches;
+				if (subPatches.length > 0)
+				{
+					addDomNodesHelp(domNode, vNode, subPatches, 0, low, high, eventNode);
+				}
+			}
+		}
 		else
 		{
 			patch.domNode = domNode;
@@ -7363,12 +7707,12 @@ function addDomNodesHelp(domNode, vNode, patches, i, low, high, eventNode)
 	{
 		case 'tagger':
 			var subNode = vNode.node;
-            
+
 			while (subNode.type === "tagger")
 			{
 				subNode = subNode.node;
 			}
-            
+
 			return addDomNodesHelp(domNode, subNode, patches, i, low + 1, high, domNode.elm_event_node_ref);
 
 		case 'node':
@@ -7378,6 +7722,26 @@ function addDomNodesHelp(domNode, vNode, patches, i, low, high, eventNode)
 			{
 				low++;
 				var vChild = vChildren[j];
+				var nextLow = low + (vChild.descendantsCount || 0);
+				if (low <= index && index <= nextLow)
+				{
+					i = addDomNodesHelp(childNodes[j], vChild, patches, i, low, nextLow, eventNode);
+					if (!(patch = patches[i]) || (index = patch.index) > high)
+					{
+						return i;
+					}
+				}
+				low = nextLow;
+			}
+			return i;
+
+		case 'keyed-node':
+			var vChildren = vNode.children;
+			var childNodes = domNode.childNodes;
+			for (var j = 0; j < vChildren.length; j++)
+			{
+				low++;
+				var vChild = vChildren[j]._1;
 				var nextLow = low + (vChild.descendantsCount || 0);
 				if (low <= index && index <= nextLow)
 				{
@@ -7450,7 +7814,7 @@ function applyPatch(domNode, patch)
 			domNode.elm_event_node_ref.tagger = patch.data;
 			return domNode;
 
-		case 'p-remove':
+		case 'p-remove-last':
 			var i = patch.data;
 			while (i--)
 			{
@@ -7458,12 +7822,80 @@ function applyPatch(domNode, patch)
 			}
 			return domNode;
 
-		case 'p-insert':
+		case 'p-append':
 			var newNodes = patch.data;
 			for (var i = 0; i < newNodes.length; i++)
 			{
 				domNode.appendChild(render(newNodes[i], patch.eventNode));
 			}
+			return domNode;
+
+		case 'p-remove':
+			var data = patch.data;
+			if (typeof data === 'undefined')
+			{
+				domNode.parentNode.removeChild(domNode);
+				return domNode;
+			}
+			var entry = data.entry;
+			if (typeof entry.index !== 'undefined')
+			{
+				domNode.parentNode.removeChild(domNode);
+			}
+			entry.data = applyPatchesHelp(domNode, data.patches);
+			return domNode;
+
+		case 'p-reorder':
+			var data = patch.data;
+
+			// end inserts
+			var endInserts = data.endInserts;
+			var end;
+			if (typeof endInserts !== 'undefined')
+			{
+				if (endInserts.length === 1)
+				{
+					var insert = endInserts[0];
+					var entry = insert.entry;
+					var end = entry.tag === 'move'
+						? entry.data
+						: render(entry.vnode, patch.eventNode);
+				}
+				else
+				{
+					end = document.createDocumentFragment();
+					for (var i = 0; i < endInserts.length; i++)
+					{
+						var insert = endInserts[i];
+						var entry = insert.entry;
+						var node = entry.tag === 'move'
+							? entry.data
+							: render(entry.vnode, patch.eventNode);
+						end.appendChild(node);
+					}
+				}
+			}
+
+			// removals
+			domNode = applyPatchesHelp(domNode, data.patches);
+
+			// inserts
+			var inserts = data.inserts;
+			for (var i = 0; i < inserts.length; i++)
+			{
+				var insert = inserts[i];
+				var entry = insert.entry;
+				var node = entry.tag === 'move'
+					? entry.data
+					: render(entry.vnode, patch.eventNode);
+				domNode.insertBefore(node, domNode.childNodes[insert.index]);
+			}
+
+			if (typeof end !== 'undefined')
+			{
+				domNode.appendChild(end);
+			}
+
 			return domNode;
 
 		case 'p-custom':
@@ -7527,11 +7959,13 @@ return {
 	lazy: F2(lazy),
 	lazy2: F3(lazy2),
 	lazy3: F4(lazy3),
+	keyedNode: F3(keyedNode),
 
 	programWithFlags: programWithFlags
 };
 
 }();var _elm_lang$virtual_dom$VirtualDom$programWithFlags = _elm_lang$virtual_dom$Native_VirtualDom.programWithFlags;
+var _elm_lang$virtual_dom$VirtualDom$keyedNode = _elm_lang$virtual_dom$Native_VirtualDom.keyedNode;
 var _elm_lang$virtual_dom$VirtualDom$lazy3 = _elm_lang$virtual_dom$Native_VirtualDom.lazy3;
 var _elm_lang$virtual_dom$VirtualDom$lazy2 = _elm_lang$virtual_dom$Native_VirtualDom.lazy2;
 var _elm_lang$virtual_dom$VirtualDom$lazy = _elm_lang$virtual_dom$Native_VirtualDom.lazy;
@@ -7696,6 +8130,36 @@ var _elm_lang$html$Html_Attributes$attribute = _elm_lang$virtual_dom$VirtualDom$
 var _elm_lang$html$Html_Attributes$contextmenu = function (value) {
 	return A2(_elm_lang$html$Html_Attributes$attribute, 'contextmenu', value);
 };
+var _elm_lang$html$Html_Attributes$draggable = function (value) {
+	return A2(_elm_lang$html$Html_Attributes$attribute, 'draggable', value);
+};
+var _elm_lang$html$Html_Attributes$list = function (value) {
+	return A2(_elm_lang$html$Html_Attributes$attribute, 'list', value);
+};
+var _elm_lang$html$Html_Attributes$maxlength = function (n) {
+	return A2(
+		_elm_lang$html$Html_Attributes$attribute,
+		'maxlength',
+		_elm_lang$core$Basics$toString(n));
+};
+var _elm_lang$html$Html_Attributes$datetime = function (value) {
+	return A2(_elm_lang$html$Html_Attributes$attribute, 'datetime', value);
+};
+var _elm_lang$html$Html_Attributes$pubdate = function (value) {
+	return A2(_elm_lang$html$Html_Attributes$attribute, 'pubdate', value);
+};
+var _elm_lang$html$Html_Attributes$colspan = function (n) {
+	return A2(
+		_elm_lang$html$Html_Attributes$attribute,
+		'colspan',
+		_elm_lang$core$Basics$toString(n));
+};
+var _elm_lang$html$Html_Attributes$rowspan = function (n) {
+	return A2(
+		_elm_lang$html$Html_Attributes$attribute,
+		'rowspan',
+		_elm_lang$core$Basics$toString(n));
+};
 var _elm_lang$html$Html_Attributes$property = _elm_lang$virtual_dom$VirtualDom$property;
 var _elm_lang$html$Html_Attributes$stringProperty = F2(
 	function (name, string) {
@@ -7721,9 +8185,6 @@ var _elm_lang$html$Html_Attributes$accesskey = function ($char) {
 };
 var _elm_lang$html$Html_Attributes$dir = function (value) {
 	return A2(_elm_lang$html$Html_Attributes$stringProperty, 'dir', value);
-};
-var _elm_lang$html$Html_Attributes$draggable = function (value) {
-	return A2(_elm_lang$html$Html_Attributes$stringProperty, 'draggable', value);
 };
 var _elm_lang$html$Html_Attributes$dropzone = function (value) {
 	return A2(_elm_lang$html$Html_Attributes$stringProperty, 'dropzone', value);
@@ -7824,19 +8285,10 @@ var _elm_lang$html$Html_Attributes$enctype = function (value) {
 var _elm_lang$html$Html_Attributes$formaction = function (value) {
 	return A2(_elm_lang$html$Html_Attributes$stringProperty, 'formAction', value);
 };
-var _elm_lang$html$Html_Attributes$list = function (value) {
-	return A2(_elm_lang$html$Html_Attributes$stringProperty, 'list', value);
-};
 var _elm_lang$html$Html_Attributes$minlength = function (n) {
 	return A2(
 		_elm_lang$html$Html_Attributes$stringProperty,
 		'minLength',
-		_elm_lang$core$Basics$toString(n));
-};
-var _elm_lang$html$Html_Attributes$maxlength = function (n) {
-	return A2(
-		_elm_lang$html$Html_Attributes$stringProperty,
-		'maxLength',
 		_elm_lang$core$Basics$toString(n));
 };
 var _elm_lang$html$Html_Attributes$method = function (value) {
@@ -7926,32 +8378,14 @@ var _elm_lang$html$Html_Attributes$ping = function (value) {
 var _elm_lang$html$Html_Attributes$rel = function (value) {
 	return A2(_elm_lang$html$Html_Attributes$stringProperty, 'rel', value);
 };
-var _elm_lang$html$Html_Attributes$datetime = function (value) {
-	return A2(_elm_lang$html$Html_Attributes$stringProperty, 'datetime', value);
-};
-var _elm_lang$html$Html_Attributes$pubdate = function (value) {
-	return A2(_elm_lang$html$Html_Attributes$stringProperty, 'pubdate', value);
-};
 var _elm_lang$html$Html_Attributes$start = function (n) {
 	return A2(
 		_elm_lang$html$Html_Attributes$stringProperty,
 		'start',
 		_elm_lang$core$Basics$toString(n));
 };
-var _elm_lang$html$Html_Attributes$colspan = function (n) {
-	return A2(
-		_elm_lang$html$Html_Attributes$stringProperty,
-		'colSpan',
-		_elm_lang$core$Basics$toString(n));
-};
 var _elm_lang$html$Html_Attributes$headers = function (value) {
 	return A2(_elm_lang$html$Html_Attributes$stringProperty, 'headers', value);
-};
-var _elm_lang$html$Html_Attributes$rowspan = function (n) {
-	return A2(
-		_elm_lang$html$Html_Attributes$stringProperty,
-		'rowSpan',
-		_elm_lang$core$Basics$toString(n));
 };
 var _elm_lang$html$Html_Attributes$scope = function (value) {
 	return A2(_elm_lang$html$Html_Attributes$stringProperty, 'scope', value);
@@ -8489,6 +8923,536 @@ var _elm_lang$svg$Svg_Attributes$additive = _elm_lang$virtual_dom$VirtualDom$att
 var _elm_lang$svg$Svg_Attributes$accumulate = _elm_lang$virtual_dom$VirtualDom$attribute('accumulate');
 var _elm_lang$svg$Svg_Attributes$accelerate = _elm_lang$virtual_dom$VirtualDom$attribute('accelerate');
 var _elm_lang$svg$Svg_Attributes$accentHeight = _elm_lang$virtual_dom$VirtualDom$attribute('accent-height');
+var _elm_lang$websocket$Native_WebSocket = function() {
+
+function open(url, settings)
+{
+	return _elm_lang$core$Native_Scheduler.nativeBinding(function(callback)
+	{
+		try
+		{
+			var socket = new WebSocket(url);
+		}
+		catch(err)
+		{
+			return callback(_elm_lang$core$Native_Scheduler.fail({
+				ctor: err.name === 'SecurityError' ? 'BadSecurity' : 'BadArgs',
+				_0: err.message
+			}));
+		}
+
+		socket.addEventListener("open", function(event) {
+			callback(_elm_lang$core$Native_Scheduler.succeed(socket));
+		});
+
+		socket.addEventListener("message", function(event) {
+			_elm_lang$core$Native_Scheduler.rawSpawn(A2(settings.onMessage, socket, event.data));
+		});
+
+		socket.addEventListener("close", function(event) {
+			_elm_lang$core$Native_Scheduler.rawSpawn(settings.onClose({
+				code: event.code,
+				reason: event.reason,
+				wasClean: event.wasClean
+			}));
+		});
+
+		return function()
+		{
+			if (socket && socket.close)
+			{
+				socket.close();
+			}
+		};
+	});
+}
+
+function send(socket, string)
+{
+	return _elm_lang$core$Native_Scheduler.nativeBinding(function(callback)
+	{
+		var result =
+			socket.readyState === WebSocket.OPEN
+				? _elm_lang$core$Maybe$Nothing
+				: _elm_lang$core$Maybe$Just({ ctor: 'NotOpen' });
+
+		try
+		{
+			socket.send(string);
+		}
+		catch(err)
+		{
+			result = _elm_lang$core$Maybe$Just({ ctor: 'BadString' });
+		}
+
+		callback(_elm_lang$core$Native_Scheduler.succeed(result));
+	});
+}
+
+function close(code, reason, socket)
+{
+	return _elm_lang$core$Native_Scheduler.nativeBinding(function(callback) {
+		try
+		{
+			socket.close(code, reason);
+		}
+		catch(err)
+		{
+			return callback(_elm_lang$core$Native_Scheduler.fail(_elm_lang$core$Maybe$Just({
+				ctor: err.name === 'SyntaxError' ? 'BadReason' : 'BadCode'
+			})));
+		}
+		callback(_elm_lang$core$Native_Scheduler.succeed(_elm_lang$core$Maybe$Nothing));
+	});
+}
+
+function bytesQueued(socket)
+{
+	return _elm_lang$core$Native_Scheduler.nativeBinding(function(callback) {
+		callback(_elm_lang$core$Native_Scheduler.succeed(socket.bufferedAmount));
+	});
+}
+
+return {
+	open: F2(open),
+	send: F2(send),
+	close: F3(close),
+	bytesQueued: bytesQueued
+};
+
+}();
+var _elm_lang$websocket$WebSocket_LowLevel$bytesQueued = _elm_lang$websocket$Native_WebSocket.bytesQueued;
+var _elm_lang$websocket$WebSocket_LowLevel$send = _elm_lang$websocket$Native_WebSocket.send;
+var _elm_lang$websocket$WebSocket_LowLevel$closeWith = _elm_lang$websocket$Native_WebSocket.close;
+var _elm_lang$websocket$WebSocket_LowLevel$close = function (socket) {
+	return A2(
+		_elm_lang$core$Task$map,
+		_elm_lang$core$Basics$always(
+			{ctor: '_Tuple0'}),
+		A3(_elm_lang$websocket$WebSocket_LowLevel$closeWith, 1000, '', socket));
+};
+var _elm_lang$websocket$WebSocket_LowLevel$open = _elm_lang$websocket$Native_WebSocket.open;
+var _elm_lang$websocket$WebSocket_LowLevel$Settings = F2(
+	function (a, b) {
+		return {onMessage: a, onClose: b};
+	});
+var _elm_lang$websocket$WebSocket_LowLevel$WebSocket = {ctor: 'WebSocket'};
+var _elm_lang$websocket$WebSocket_LowLevel$BadArgs = {ctor: 'BadArgs'};
+var _elm_lang$websocket$WebSocket_LowLevel$BadSecurity = {ctor: 'BadSecurity'};
+var _elm_lang$websocket$WebSocket_LowLevel$BadReason = {ctor: 'BadReason'};
+var _elm_lang$websocket$WebSocket_LowLevel$BadCode = {ctor: 'BadCode'};
+var _elm_lang$websocket$WebSocket_LowLevel$BadString = {ctor: 'BadString'};
+var _elm_lang$websocket$WebSocket_LowLevel$NotOpen = {ctor: 'NotOpen'};
+var _elm_lang$websocket$WebSocket$closeConnection = function (connection) {
+	var _p0 = connection;
+	if (_p0.ctor === 'Opening') {
+		return _elm_lang$core$Process$kill(_p0._1);
+	} else {
+		return _elm_lang$websocket$WebSocket_LowLevel$close(_p0._0);
+	}
+};
+var _elm_lang$websocket$WebSocket$after = function (backoff) {
+	return (_elm_lang$core$Native_Utils.cmp(backoff, 1) < 0) ? _elm_lang$core$Task$succeed(
+		{ctor: '_Tuple0'}) : _elm_lang$core$Process$sleep(
+		_elm_lang$core$Basics$toFloat(
+			10 * Math.pow(2, backoff)));
+};
+var _elm_lang$websocket$WebSocket$removeQueue = F2(
+	function (name, state) {
+		return _elm_lang$core$Native_Utils.update(
+			state,
+			{
+				queues: A2(_elm_lang$core$Dict$remove, name, state.queues)
+			});
+	});
+var _elm_lang$websocket$WebSocket$updateSocket = F3(
+	function (name, connection, state) {
+		return _elm_lang$core$Native_Utils.update(
+			state,
+			{
+				sockets: A3(_elm_lang$core$Dict$insert, name, connection, state.sockets)
+			});
+	});
+var _elm_lang$websocket$WebSocket$add = F2(
+	function (value, maybeList) {
+		var _p1 = maybeList;
+		if (_p1.ctor === 'Nothing') {
+			return _elm_lang$core$Maybe$Just(
+				_elm_lang$core$Native_List.fromArray(
+					[value]));
+		} else {
+			return _elm_lang$core$Maybe$Just(
+				A2(_elm_lang$core$List_ops['::'], value, _p1._0));
+		}
+	});
+var _elm_lang$websocket$WebSocket$buildSubDict = F2(
+	function (subs, dict) {
+		buildSubDict:
+		while (true) {
+			var _p2 = subs;
+			if (_p2.ctor === '[]') {
+				return dict;
+			} else {
+				if (_p2._0.ctor === 'Listen') {
+					var _v3 = _p2._1,
+						_v4 = A3(
+						_elm_lang$core$Dict$update,
+						_p2._0._0,
+						_elm_lang$websocket$WebSocket$add(_p2._0._1),
+						dict);
+					subs = _v3;
+					dict = _v4;
+					continue buildSubDict;
+				} else {
+					var _v5 = _p2._1,
+						_v6 = A3(
+						_elm_lang$core$Dict$update,
+						_p2._0._0,
+						function (_p3) {
+							return _elm_lang$core$Maybe$Just(
+								A2(
+									_elm_lang$core$Maybe$withDefault,
+									_elm_lang$core$Native_List.fromArray(
+										[]),
+									_p3));
+						},
+						dict);
+					subs = _v5;
+					dict = _v6;
+					continue buildSubDict;
+				}
+			}
+		}
+	});
+var _elm_lang$websocket$WebSocket_ops = _elm_lang$websocket$WebSocket_ops || {};
+_elm_lang$websocket$WebSocket_ops['&>'] = F2(
+	function (t1, t2) {
+		return A2(
+			_elm_lang$core$Task$andThen,
+			t1,
+			function (_p4) {
+				return t2;
+			});
+	});
+var _elm_lang$websocket$WebSocket$sendMessagesHelp = F3(
+	function (cmds, socketsDict, queuesDict) {
+		sendMessagesHelp:
+		while (true) {
+			var _p5 = cmds;
+			if (_p5.ctor === '[]') {
+				return _elm_lang$core$Task$succeed(queuesDict);
+			} else {
+				var _p9 = _p5._1;
+				var _p8 = _p5._0._0;
+				var _p7 = _p5._0._1;
+				var _p6 = A2(_elm_lang$core$Dict$get, _p8, socketsDict);
+				if ((_p6.ctor === 'Just') && (_p6._0.ctor === 'Connected')) {
+					return A2(
+						_elm_lang$websocket$WebSocket_ops['&>'],
+						A2(_elm_lang$websocket$WebSocket_LowLevel$send, _p6._0._0, _p7),
+						A3(_elm_lang$websocket$WebSocket$sendMessagesHelp, _p9, socketsDict, queuesDict));
+				} else {
+					var _v9 = _p9,
+						_v10 = socketsDict,
+						_v11 = A3(
+						_elm_lang$core$Dict$update,
+						_p8,
+						_elm_lang$websocket$WebSocket$add(_p7),
+						queuesDict);
+					cmds = _v9;
+					socketsDict = _v10;
+					queuesDict = _v11;
+					continue sendMessagesHelp;
+				}
+			}
+		}
+	});
+var _elm_lang$websocket$WebSocket$subscription = _elm_lang$core$Native_Platform.leaf('WebSocket');
+var _elm_lang$websocket$WebSocket$command = _elm_lang$core$Native_Platform.leaf('WebSocket');
+var _elm_lang$websocket$WebSocket$State = F3(
+	function (a, b, c) {
+		return {sockets: a, queues: b, subs: c};
+	});
+var _elm_lang$websocket$WebSocket$init = _elm_lang$core$Task$succeed(
+	A3(_elm_lang$websocket$WebSocket$State, _elm_lang$core$Dict$empty, _elm_lang$core$Dict$empty, _elm_lang$core$Dict$empty));
+var _elm_lang$websocket$WebSocket$Send = F2(
+	function (a, b) {
+		return {ctor: 'Send', _0: a, _1: b};
+	});
+var _elm_lang$websocket$WebSocket$send = F2(
+	function (url, message) {
+		return _elm_lang$websocket$WebSocket$command(
+			A2(_elm_lang$websocket$WebSocket$Send, url, message));
+	});
+var _elm_lang$websocket$WebSocket$cmdMap = F2(
+	function (_p11, _p10) {
+		var _p12 = _p10;
+		return A2(_elm_lang$websocket$WebSocket$Send, _p12._0, _p12._1);
+	});
+var _elm_lang$websocket$WebSocket$KeepAlive = function (a) {
+	return {ctor: 'KeepAlive', _0: a};
+};
+var _elm_lang$websocket$WebSocket$keepAlive = function (url) {
+	return _elm_lang$websocket$WebSocket$subscription(
+		_elm_lang$websocket$WebSocket$KeepAlive(url));
+};
+var _elm_lang$websocket$WebSocket$Listen = F2(
+	function (a, b) {
+		return {ctor: 'Listen', _0: a, _1: b};
+	});
+var _elm_lang$websocket$WebSocket$listen = F2(
+	function (url, tagger) {
+		return _elm_lang$websocket$WebSocket$subscription(
+			A2(_elm_lang$websocket$WebSocket$Listen, url, tagger));
+	});
+var _elm_lang$websocket$WebSocket$subMap = F2(
+	function (func, sub) {
+		var _p13 = sub;
+		if (_p13.ctor === 'Listen') {
+			return A2(
+				_elm_lang$websocket$WebSocket$Listen,
+				_p13._0,
+				function (_p14) {
+					return func(
+						_p13._1(_p14));
+				});
+		} else {
+			return _elm_lang$websocket$WebSocket$KeepAlive(_p13._0);
+		}
+	});
+var _elm_lang$websocket$WebSocket$Connected = function (a) {
+	return {ctor: 'Connected', _0: a};
+};
+var _elm_lang$websocket$WebSocket$Opening = F2(
+	function (a, b) {
+		return {ctor: 'Opening', _0: a, _1: b};
+	});
+var _elm_lang$websocket$WebSocket$BadOpen = function (a) {
+	return {ctor: 'BadOpen', _0: a};
+};
+var _elm_lang$websocket$WebSocket$GoodOpen = F2(
+	function (a, b) {
+		return {ctor: 'GoodOpen', _0: a, _1: b};
+	});
+var _elm_lang$websocket$WebSocket$Die = function (a) {
+	return {ctor: 'Die', _0: a};
+};
+var _elm_lang$websocket$WebSocket$Receive = F2(
+	function (a, b) {
+		return {ctor: 'Receive', _0: a, _1: b};
+	});
+var _elm_lang$websocket$WebSocket$open = F2(
+	function (name, router) {
+		return A2(
+			_elm_lang$websocket$WebSocket_LowLevel$open,
+			name,
+			{
+				onMessage: F2(
+					function (_p15, msg) {
+						return A2(
+							_elm_lang$core$Platform$sendToSelf,
+							router,
+							A2(_elm_lang$websocket$WebSocket$Receive, name, msg));
+					}),
+				onClose: function (details) {
+					return A2(
+						_elm_lang$core$Platform$sendToSelf,
+						router,
+						_elm_lang$websocket$WebSocket$Die(name));
+				}
+			});
+	});
+var _elm_lang$websocket$WebSocket$attemptOpen = F3(
+	function (router, backoff, name) {
+		var badOpen = function (_p16) {
+			return A2(
+				_elm_lang$core$Platform$sendToSelf,
+				router,
+				_elm_lang$websocket$WebSocket$BadOpen(name));
+		};
+		var goodOpen = function (ws) {
+			return A2(
+				_elm_lang$core$Platform$sendToSelf,
+				router,
+				A2(_elm_lang$websocket$WebSocket$GoodOpen, name, ws));
+		};
+		var actuallyAttemptOpen = A2(
+			_elm_lang$core$Task$onError,
+			A2(
+				_elm_lang$core$Task$andThen,
+				A2(_elm_lang$websocket$WebSocket$open, name, router),
+				goodOpen),
+			badOpen);
+		return _elm_lang$core$Process$spawn(
+			A2(
+				_elm_lang$websocket$WebSocket_ops['&>'],
+				_elm_lang$websocket$WebSocket$after(backoff),
+				actuallyAttemptOpen));
+	});
+var _elm_lang$websocket$WebSocket$onEffects = F4(
+	function (router, cmds, subs, state) {
+		var newSubs = A2(_elm_lang$websocket$WebSocket$buildSubDict, subs, _elm_lang$core$Dict$empty);
+		var cleanup = function (newQueues) {
+			var rightStep = F3(
+				function (name, connection, getNewSockets) {
+					return A2(
+						_elm_lang$websocket$WebSocket_ops['&>'],
+						_elm_lang$websocket$WebSocket$closeConnection(connection),
+						getNewSockets);
+				});
+			var bothStep = F4(
+				function (name, _p17, connection, getNewSockets) {
+					return A2(
+						_elm_lang$core$Task$map,
+						A2(_elm_lang$core$Dict$insert, name, connection),
+						getNewSockets);
+				});
+			var leftStep = F3(
+				function (name, _p18, getNewSockets) {
+					return A2(
+						_elm_lang$core$Task$andThen,
+						getNewSockets,
+						function (newSockets) {
+							return A2(
+								_elm_lang$core$Task$andThen,
+								A3(_elm_lang$websocket$WebSocket$attemptOpen, router, 0, name),
+								function (pid) {
+									return _elm_lang$core$Task$succeed(
+										A3(
+											_elm_lang$core$Dict$insert,
+											name,
+											A2(_elm_lang$websocket$WebSocket$Opening, 0, pid),
+											newSockets));
+								});
+						});
+				});
+			var newEntries = A2(
+				_elm_lang$core$Dict$union,
+				newQueues,
+				A2(
+					_elm_lang$core$Dict$map,
+					F2(
+						function (k, v) {
+							return _elm_lang$core$Native_List.fromArray(
+								[]);
+						}),
+					newSubs));
+			return A2(
+				_elm_lang$core$Task$andThen,
+				A6(
+					_elm_lang$core$Dict$merge,
+					leftStep,
+					bothStep,
+					rightStep,
+					newEntries,
+					state.sockets,
+					_elm_lang$core$Task$succeed(_elm_lang$core$Dict$empty)),
+				function (newSockets) {
+					return _elm_lang$core$Task$succeed(
+						A3(_elm_lang$websocket$WebSocket$State, newSockets, newQueues, newSubs));
+				});
+		};
+		var sendMessagesGetNewQueues = A3(_elm_lang$websocket$WebSocket$sendMessagesHelp, cmds, state.sockets, state.queues);
+		return A2(_elm_lang$core$Task$andThen, sendMessagesGetNewQueues, cleanup);
+	});
+var _elm_lang$websocket$WebSocket$onSelfMsg = F3(
+	function (router, selfMsg, state) {
+		var _p19 = selfMsg;
+		switch (_p19.ctor) {
+			case 'Receive':
+				var sends = A2(
+					_elm_lang$core$List$map,
+					function (tagger) {
+						return A2(
+							_elm_lang$core$Platform$sendToApp,
+							router,
+							tagger(_p19._1));
+					},
+					A2(
+						_elm_lang$core$Maybe$withDefault,
+						_elm_lang$core$Native_List.fromArray(
+							[]),
+						A2(_elm_lang$core$Dict$get, _p19._0, state.subs)));
+				return A2(
+					_elm_lang$websocket$WebSocket_ops['&>'],
+					_elm_lang$core$Task$sequence(sends),
+					_elm_lang$core$Task$succeed(state));
+			case 'Die':
+				var _p21 = _p19._0;
+				var _p20 = A2(_elm_lang$core$Dict$get, _p21, state.sockets);
+				if (_p20.ctor === 'Nothing') {
+					return _elm_lang$core$Task$succeed(state);
+				} else {
+					return A2(
+						_elm_lang$core$Task$andThen,
+						A3(_elm_lang$websocket$WebSocket$attemptOpen, router, 0, _p21),
+						function (pid) {
+							return _elm_lang$core$Task$succeed(
+								A3(
+									_elm_lang$websocket$WebSocket$updateSocket,
+									_p21,
+									A2(_elm_lang$websocket$WebSocket$Opening, 0, pid),
+									state));
+						});
+				}
+			case 'GoodOpen':
+				var _p24 = _p19._1;
+				var _p23 = _p19._0;
+				var _p22 = A2(_elm_lang$core$Dict$get, _p23, state.queues);
+				if (_p22.ctor === 'Nothing') {
+					return _elm_lang$core$Task$succeed(
+						A3(
+							_elm_lang$websocket$WebSocket$updateSocket,
+							_p23,
+							_elm_lang$websocket$WebSocket$Connected(_p24),
+							state));
+				} else {
+					return A3(
+						_elm_lang$core$List$foldl,
+						F2(
+							function (msg, task) {
+								return A2(
+									_elm_lang$websocket$WebSocket_ops['&>'],
+									A2(_elm_lang$websocket$WebSocket_LowLevel$send, _p24, msg),
+									task);
+							}),
+						_elm_lang$core$Task$succeed(
+							A2(
+								_elm_lang$websocket$WebSocket$removeQueue,
+								_p23,
+								A3(
+									_elm_lang$websocket$WebSocket$updateSocket,
+									_p23,
+									_elm_lang$websocket$WebSocket$Connected(_p24),
+									state))),
+						_p22._0);
+				}
+			default:
+				var _p27 = _p19._0;
+				var _p25 = A2(_elm_lang$core$Dict$get, _p27, state.sockets);
+				if (_p25.ctor === 'Nothing') {
+					return _elm_lang$core$Task$succeed(state);
+				} else {
+					if (_p25._0.ctor === 'Opening') {
+						var _p26 = _p25._0._0;
+						return A2(
+							_elm_lang$core$Task$andThen,
+							A3(_elm_lang$websocket$WebSocket$attemptOpen, router, _p26 + 1, _p27),
+							function (pid) {
+								return _elm_lang$core$Task$succeed(
+									A3(
+										_elm_lang$websocket$WebSocket$updateSocket,
+										_p27,
+										A2(_elm_lang$websocket$WebSocket$Opening, _p26 + 1, pid),
+										state));
+							});
+					} else {
+						return _elm_lang$core$Task$succeed(state);
+					}
+				}
+		}
+	});
+_elm_lang$core$Native_Platform.effectManagers['WebSocket'] = {pkg: 'elm-lang/websocket', init: _elm_lang$websocket$WebSocket$init, onEffects: _elm_lang$websocket$WebSocket$onEffects, onSelfMsg: _elm_lang$websocket$WebSocket$onSelfMsg, tag: 'fx', cmdMap: _elm_lang$websocket$WebSocket$cmdMap, subMap: _elm_lang$websocket$WebSocket$subMap};
 var _elm_lang$window$Native_Window = function()
 {
 
@@ -8609,6 +9573,362 @@ var _elm_lang$window$Window$subMap = F2(
 			});
 	});
 _elm_lang$core$Native_Platform.effectManagers['Window'] = {pkg: 'elm-lang/window', init: _elm_lang$window$Window$init, onEffects: _elm_lang$window$Window$onEffects, onSelfMsg: _elm_lang$window$Window$onSelfMsg, tag: 'sub', subMap: _elm_lang$window$Window$subMap};
+//import Dict, List, Maybe, Native.Scheduler //
+
+var _evancz$elm_http$Native_Http = function() {
+
+function send(settings, request)
+{
+	return _elm_lang$core$Native_Scheduler.nativeBinding(function(callback) {
+		var req = new XMLHttpRequest();
+
+		// start
+		if (settings.onStart.ctor === 'Just')
+		{
+			req.addEventListener('loadStart', function() {
+				var task = settings.onStart._0;
+				_elm_lang$core$Native_Scheduler.rawSpawn(task);
+			});
+		}
+
+		// progress
+		if (settings.onProgress.ctor === 'Just')
+		{
+			req.addEventListener('progress', function(event) {
+				var progress = !event.lengthComputable
+					? _elm_lang$core$Maybe$Nothing
+					: _elm_lang$core$Maybe$Just({
+						loaded: event.loaded,
+						total: event.total
+					});
+				var task = settings.onProgress._0(progress);
+				_elm_lang$core$Native_Scheduler.rawSpawn(task);
+			});
+		}
+
+		// end
+		req.addEventListener('error', function() {
+			return callback(_elm_lang$core$Native_Scheduler.fail({ ctor: 'RawNetworkError' }));
+		});
+
+		req.addEventListener('timeout', function() {
+			return callback(_elm_lang$core$Native_Scheduler.fail({ ctor: 'RawTimeout' }));
+		});
+
+		req.addEventListener('load', function() {
+			return callback(_elm_lang$core$Native_Scheduler.succeed(toResponse(req)));
+		});
+
+		req.open(request.verb, request.url, true);
+
+		// set all the headers
+		function setHeader(pair) {
+			req.setRequestHeader(pair._0, pair._1);
+		}
+		A2(_elm_lang$core$List$map, setHeader, request.headers);
+
+		// set the timeout
+		req.timeout = settings.timeout;
+
+		// enable this withCredentials thing
+		req.withCredentials = settings.withCredentials;
+
+		// ask for a specific MIME type for the response
+		if (settings.desiredResponseType.ctor === 'Just')
+		{
+			req.overrideMimeType(settings.desiredResponseType._0);
+		}
+
+		// actuall send the request
+		if(request.body.ctor === "BodyFormData")
+		{
+			req.send(request.body.formData)
+		}
+		else
+		{
+			req.send(request.body._0);
+		}
+
+		return function() {
+			req.abort();
+		};
+	});
+}
+
+
+// deal with responses
+
+function toResponse(req)
+{
+	var tag = req.responseType === 'blob' ? 'Blob' : 'Text'
+	var response = tag === 'Blob' ? req.response : req.responseText;
+	return {
+		status: req.status,
+		statusText: req.statusText,
+		headers: parseHeaders(req.getAllResponseHeaders()),
+		url: req.responseURL,
+		value: { ctor: tag, _0: response }
+	};
+}
+
+
+function parseHeaders(rawHeaders)
+{
+	var headers = _elm_lang$core$Dict$empty;
+
+	if (!rawHeaders)
+	{
+		return headers;
+	}
+
+	var headerPairs = rawHeaders.split('\u000d\u000a');
+	for (var i = headerPairs.length; i--; )
+	{
+		var headerPair = headerPairs[i];
+		var index = headerPair.indexOf('\u003a\u0020');
+		if (index > 0)
+		{
+			var key = headerPair.substring(0, index);
+			var value = headerPair.substring(index + 2);
+
+			headers = A3(_elm_lang$core$Dict$update, key, function(oldValue) {
+				if (oldValue.ctor === 'Just')
+				{
+					return _elm_lang$core$Maybe$Just(value + ', ' + oldValue._0);
+				}
+				return _elm_lang$core$Maybe$Just(value);
+			}, headers);
+		}
+	}
+
+	return headers;
+}
+
+
+function multipart(dataList)
+{
+	var formData = new FormData();
+
+	while (dataList.ctor !== '[]')
+	{
+		var data = dataList._0;
+		if (data.ctor === 'StringData')
+		{
+			formData.append(data._0, data._1);
+		}
+		else
+		{
+			var fileName = data._1.ctor === 'Nothing'
+				? undefined
+				: data._1._0;
+			formData.append(data._0, data._2, fileName);
+		}
+		dataList = dataList._1;
+	}
+
+	return { ctor: 'BodyFormData', formData: formData };
+}
+
+
+function uriEncode(string)
+{
+	return encodeURIComponent(string);
+}
+
+function uriDecode(string)
+{
+	return decodeURIComponent(string);
+}
+
+return {
+	send: F2(send),
+	multipart: multipart,
+	uriEncode: uriEncode,
+	uriDecode: uriDecode
+};
+
+}();
+var _evancz$elm_http$Http$send = _evancz$elm_http$Native_Http.send;
+var _evancz$elm_http$Http$defaultSettings = {timeout: 0, onStart: _elm_lang$core$Maybe$Nothing, onProgress: _elm_lang$core$Maybe$Nothing, desiredResponseType: _elm_lang$core$Maybe$Nothing, withCredentials: false};
+var _evancz$elm_http$Http$multipart = _evancz$elm_http$Native_Http.multipart;
+var _evancz$elm_http$Http$uriDecode = _evancz$elm_http$Native_Http.uriDecode;
+var _evancz$elm_http$Http$uriEncode = _evancz$elm_http$Native_Http.uriEncode;
+var _evancz$elm_http$Http$queryEscape = function (string) {
+	return A2(
+		_elm_lang$core$String$join,
+		'+',
+		A2(
+			_elm_lang$core$String$split,
+			'%20',
+			_evancz$elm_http$Http$uriEncode(string)));
+};
+var _evancz$elm_http$Http$queryPair = function (_p0) {
+	var _p1 = _p0;
+	return A2(
+		_elm_lang$core$Basics_ops['++'],
+		_evancz$elm_http$Http$queryEscape(_p1._0),
+		A2(
+			_elm_lang$core$Basics_ops['++'],
+			'=',
+			_evancz$elm_http$Http$queryEscape(_p1._1)));
+};
+var _evancz$elm_http$Http$url = F2(
+	function (baseUrl, args) {
+		var _p2 = args;
+		if (_p2.ctor === '[]') {
+			return baseUrl;
+		} else {
+			return A2(
+				_elm_lang$core$Basics_ops['++'],
+				baseUrl,
+				A2(
+					_elm_lang$core$Basics_ops['++'],
+					'?',
+					A2(
+						_elm_lang$core$String$join,
+						'&',
+						A2(_elm_lang$core$List$map, _evancz$elm_http$Http$queryPair, args))));
+		}
+	});
+var _evancz$elm_http$Http$Request = F4(
+	function (a, b, c, d) {
+		return {verb: a, headers: b, url: c, body: d};
+	});
+var _evancz$elm_http$Http$Settings = F5(
+	function (a, b, c, d, e) {
+		return {timeout: a, onStart: b, onProgress: c, desiredResponseType: d, withCredentials: e};
+	});
+var _evancz$elm_http$Http$Response = F5(
+	function (a, b, c, d, e) {
+		return {status: a, statusText: b, headers: c, url: d, value: e};
+	});
+var _evancz$elm_http$Http$TODO_implement_blob_in_another_library = {ctor: 'TODO_implement_blob_in_another_library'};
+var _evancz$elm_http$Http$TODO_implement_file_in_another_library = {ctor: 'TODO_implement_file_in_another_library'};
+var _evancz$elm_http$Http$BodyBlob = function (a) {
+	return {ctor: 'BodyBlob', _0: a};
+};
+var _evancz$elm_http$Http$BodyFormData = {ctor: 'BodyFormData'};
+var _evancz$elm_http$Http$ArrayBuffer = {ctor: 'ArrayBuffer'};
+var _evancz$elm_http$Http$BodyString = function (a) {
+	return {ctor: 'BodyString', _0: a};
+};
+var _evancz$elm_http$Http$string = _evancz$elm_http$Http$BodyString;
+var _evancz$elm_http$Http$Empty = {ctor: 'Empty'};
+var _evancz$elm_http$Http$empty = _evancz$elm_http$Http$Empty;
+var _evancz$elm_http$Http$FileData = F3(
+	function (a, b, c) {
+		return {ctor: 'FileData', _0: a, _1: b, _2: c};
+	});
+var _evancz$elm_http$Http$BlobData = F3(
+	function (a, b, c) {
+		return {ctor: 'BlobData', _0: a, _1: b, _2: c};
+	});
+var _evancz$elm_http$Http$blobData = _evancz$elm_http$Http$BlobData;
+var _evancz$elm_http$Http$StringData = F2(
+	function (a, b) {
+		return {ctor: 'StringData', _0: a, _1: b};
+	});
+var _evancz$elm_http$Http$stringData = _evancz$elm_http$Http$StringData;
+var _evancz$elm_http$Http$Blob = function (a) {
+	return {ctor: 'Blob', _0: a};
+};
+var _evancz$elm_http$Http$Text = function (a) {
+	return {ctor: 'Text', _0: a};
+};
+var _evancz$elm_http$Http$RawNetworkError = {ctor: 'RawNetworkError'};
+var _evancz$elm_http$Http$RawTimeout = {ctor: 'RawTimeout'};
+var _evancz$elm_http$Http$BadResponse = F2(
+	function (a, b) {
+		return {ctor: 'BadResponse', _0: a, _1: b};
+	});
+var _evancz$elm_http$Http$UnexpectedPayload = function (a) {
+	return {ctor: 'UnexpectedPayload', _0: a};
+};
+var _evancz$elm_http$Http$handleResponse = F2(
+	function (handle, response) {
+		if ((_elm_lang$core$Native_Utils.cmp(200, response.status) < 1) && (_elm_lang$core$Native_Utils.cmp(response.status, 300) < 0)) {
+			var _p3 = response.value;
+			if (_p3.ctor === 'Text') {
+				return handle(_p3._0);
+			} else {
+				return _elm_lang$core$Task$fail(
+					_evancz$elm_http$Http$UnexpectedPayload('Response body is a blob, expecting a string.'));
+			}
+		} else {
+			return _elm_lang$core$Task$fail(
+				A2(_evancz$elm_http$Http$BadResponse, response.status, response.statusText));
+		}
+	});
+var _evancz$elm_http$Http$NetworkError = {ctor: 'NetworkError'};
+var _evancz$elm_http$Http$Timeout = {ctor: 'Timeout'};
+var _evancz$elm_http$Http$promoteError = function (rawError) {
+	var _p4 = rawError;
+	if (_p4.ctor === 'RawTimeout') {
+		return _evancz$elm_http$Http$Timeout;
+	} else {
+		return _evancz$elm_http$Http$NetworkError;
+	}
+};
+var _evancz$elm_http$Http$getString = function (url) {
+	var request = {
+		verb: 'GET',
+		headers: _elm_lang$core$Native_List.fromArray(
+			[]),
+		url: url,
+		body: _evancz$elm_http$Http$empty
+	};
+	return A2(
+		_elm_lang$core$Task$andThen,
+		A2(
+			_elm_lang$core$Task$mapError,
+			_evancz$elm_http$Http$promoteError,
+			A2(_evancz$elm_http$Http$send, _evancz$elm_http$Http$defaultSettings, request)),
+		_evancz$elm_http$Http$handleResponse(_elm_lang$core$Task$succeed));
+};
+var _evancz$elm_http$Http$fromJson = F2(
+	function (decoder, response) {
+		var decode = function (str) {
+			var _p5 = A2(_elm_lang$core$Json_Decode$decodeString, decoder, str);
+			if (_p5.ctor === 'Ok') {
+				return _elm_lang$core$Task$succeed(_p5._0);
+			} else {
+				return _elm_lang$core$Task$fail(
+					_evancz$elm_http$Http$UnexpectedPayload(_p5._0));
+			}
+		};
+		return A2(
+			_elm_lang$core$Task$andThen,
+			A2(_elm_lang$core$Task$mapError, _evancz$elm_http$Http$promoteError, response),
+			_evancz$elm_http$Http$handleResponse(decode));
+	});
+var _evancz$elm_http$Http$get = F2(
+	function (decoder, url) {
+		var request = {
+			verb: 'GET',
+			headers: _elm_lang$core$Native_List.fromArray(
+				[]),
+			url: url,
+			body: _evancz$elm_http$Http$empty
+		};
+		return A2(
+			_evancz$elm_http$Http$fromJson,
+			decoder,
+			A2(_evancz$elm_http$Http$send, _evancz$elm_http$Http$defaultSettings, request));
+	});
+var _evancz$elm_http$Http$post = F3(
+	function (decoder, url, body) {
+		var request = {
+			verb: 'POST',
+			headers: _elm_lang$core$Native_List.fromArray(
+				[]),
+			url: url,
+			body: body
+		};
+		return A2(
+			_evancz$elm_http$Http$fromJson,
+			decoder,
+			A2(_evancz$elm_http$Http$send, _evancz$elm_http$Http$defaultSettings, request));
+	});
 var _mdgriffith$elm_style_animation$Style_Properties$alignStartingPoint = function (points) {
 	var sums = A2(
 		_elm_lang$core$List$map,
@@ -15577,7 +16897,44 @@ var _mdgriffith$elm_style_animation$Style$tick = F2(
 				_mdgriffith$elm_style_animation$Style_Core$Tick(time),
 				_p18._0));
 	});
-var _user$project$MyStyle$loadAnimation = F2(
+var _user$project$AppStyle$gameSettingsBoxStyle = _elm_lang$html$Html_Attributes$style(
+	_elm_lang$core$Native_List.fromArray(
+		[
+			{ctor: '_Tuple2', _0: 'text-align', _1: 'left'},
+			{ctor: '_Tuple2', _0: 'margin', _1: 'auto'}
+		]));
+var _user$project$AppStyle$menuBoxStyle = function (a) {
+	return _elm_lang$html$Html_Attributes$style(
+		A2(
+			_elm_lang$core$Basics_ops['++'],
+			_elm_lang$core$Native_List.fromArray(
+				[
+					{ctor: '_Tuple2', _0: 'position', _1: 'absolute'},
+					{ctor: '_Tuple2', _0: 'top', _1: '-2px'},
+					{ctor: '_Tuple2', _0: 'margin-left', _1: '-2px'},
+					{ctor: '_Tuple2', _0: 'padding', _1: '25px'},
+					{ctor: '_Tuple2', _0: 'width', _1: '300px'},
+					{ctor: '_Tuple2', _0: 'height', _1: '92.5%'},
+					{ctor: '_Tuple2', _0: 'background-color', _1: '#00897B'},
+					{ctor: '_Tuple2', _0: 'color', _1: 'white'}
+				]),
+			a));
+};
+var _user$project$AppStyle$menuStyles = {
+	open: _elm_lang$core$Native_List.fromArray(
+		[
+			A2(_mdgriffith$elm_style_animation$Style_Properties$Left, 0.0, _mdgriffith$elm_style_animation$Style_Properties$Px),
+			_mdgriffith$elm_style_animation$Style_Properties$Opacity(1.0),
+			_mdgriffith$elm_style_animation$Style_Properties$Color(_elm_lang$core$Color$white)
+		]),
+	closed: _elm_lang$core$Native_List.fromArray(
+		[
+			A2(_mdgriffith$elm_style_animation$Style_Properties$Left, -350.0, _mdgriffith$elm_style_animation$Style_Properties$Px),
+			_mdgriffith$elm_style_animation$Style_Properties$Opacity(0.0),
+			_mdgriffith$elm_style_animation$Style_Properties$Color(_elm_lang$core$Color$white)
+		])
+};
+var _user$project$AppStyle$loadAnimation = F2(
 	function (animationStyle, animation) {
 		var _p0 = animationStyle;
 		if (_p0.ctor === 'Spring') {
@@ -15672,7 +17029,7 @@ var _user$project$MyStyle$loadAnimation = F2(
 										A2(_mdgriffith$elm_style_animation$Style$easing, _elm_community$easing_functions$Ease$linear, _mdgriffith$elm_style_animation$Style$queue))))))));
 		}
 	});
-var _user$project$MyStyle$initialWidgetStyle = _mdgriffith$elm_style_animation$Style$init(
+var _user$project$AppStyle$initialWidgetStyle = _mdgriffith$elm_style_animation$Style$init(
 	_elm_lang$core$Native_List.fromArray(
 		[
 			_mdgriffith$elm_style_animation$Style_Properties$Display(_mdgriffith$elm_style_animation$Style_Properties$InlineBlock),
@@ -15689,8 +17046,8 @@ var _user$project$MyStyle$initialWidgetStyle = _mdgriffith$elm_style_animation$S
 			A4(_elm_lang$core$Color$rgba, 255, 255, 255, 1.0)),
 			_mdgriffith$elm_style_animation$Style_Properties$Scale(1.0)
 		]));
-var _user$project$MyStyle$margin = {ctor: '_Tuple2', _0: 'margin', _1: '5px'};
-var _user$project$MyStyle$cellStyle = _elm_lang$core$Native_List.fromArray(
+var _user$project$AppStyle$margin = {ctor: '_Tuple2', _0: 'margin', _1: '5px'};
+var _user$project$AppStyle$cellStyle = _elm_lang$core$Native_List.fromArray(
 	[
 		{ctor: '_Tuple2', _0: 'margin', _1: '5px'},
 		{ctor: '_Tuple2', _0: 'border', _1: 'none'},
@@ -15698,7 +17055,7 @@ var _user$project$MyStyle$cellStyle = _elm_lang$core$Native_List.fromArray(
 		{ctor: '_Tuple2', _0: 'box-shadow', _1: '0 2px 5px 0 rgba(0,0,0,0.16),0 2px 10px 0 rgba(0,0,0,0.12)'},
 		{ctor: '_Tuple2', _0: 'cursor', _1: 'pointer'}
 	]);
-var _user$project$MyStyle$boardBoxStyle = _elm_lang$html$Html_Attributes$style(
+var _user$project$AppStyle$boardBoxStyle = _elm_lang$html$Html_Attributes$style(
 	_elm_lang$core$Native_List.fromArray(
 		[
 			{ctor: '_Tuple2', _0: 'margin', _1: '5px'},
@@ -15706,7 +17063,7 @@ var _user$project$MyStyle$boardBoxStyle = _elm_lang$html$Html_Attributes$style(
 			{ctor: '_Tuple2', _0: 'text-decoration', _1: 'none'},
 			{ctor: '_Tuple2', _0: 'box-shadow', _1: '0 2px 5px 0 rgba(0,0,0,0.16),0 2px 10px 0 rgba(0,0,0,0.12)'}
 		]));
-var _user$project$MyStyle$notificationStyle = _elm_lang$html$Html_Attributes$style(
+var _user$project$AppStyle$notificationStyle = _elm_lang$html$Html_Attributes$style(
 	_elm_lang$core$Native_List.fromArray(
 		[
 			{ctor: '_Tuple2', _0: 'width', _1: '40%'},
@@ -15715,7 +17072,7 @@ var _user$project$MyStyle$notificationStyle = _elm_lang$html$Html_Attributes$sty
 			{ctor: '_Tuple2', _0: 'font-size', _1: '20px'},
 			{ctor: '_Tuple2', _0: 'text-align', _1: 'center'}
 		]));
-var _user$project$MyStyle$buttonStyle = _elm_lang$html$Html_Attributes$style(
+var _user$project$AppStyle$buttonStyle = _elm_lang$html$Html_Attributes$style(
 	_elm_lang$core$Native_List.fromArray(
 		[
 			{ctor: '_Tuple2', _0: 'color', _1: '#fff'},
@@ -15732,22 +17089,264 @@ var _user$project$MyStyle$buttonStyle = _elm_lang$html$Html_Attributes$style(
 			{ctor: '_Tuple2', _0: 'text-align', _1: 'center'},
 			{ctor: '_Tuple2', _0: 'cursor', _1: 'pointer'}
 		]));
-var _user$project$MyStyle$toolBoxStyle = _elm_lang$html$Html_Attributes$style(
+var _user$project$AppStyle$toolBoxStyle = _elm_lang$html$Html_Attributes$style(
 	_elm_lang$core$Native_List.fromArray(
 		[
 			{ctor: '_Tuple2', _0: 'width', _1: '100%'},
-			{ctor: '_Tuple2', _0: 'height', _1: '40px'},
 			{ctor: '_Tuple2', _0: 'padding', _1: '10px 0'},
 			{ctor: '_Tuple2', _0: 'font-size', _1: '1em'},
 			{ctor: '_Tuple2', _0: 'text-align', _1: 'center'},
 			{ctor: '_Tuple2', _0: 'margin', _1: '0 auto'}
 		]));
-var _user$project$MyStyle$symbolColor = '#ffffff';
-var _user$project$MyStyle$strokeWidthSize = 20;
-var _user$project$MyStyle$defaultTileBg = '#9F9F9F';
-var _user$project$MyStyle$winTileBg = '#2bbbad';
-var _user$project$MyStyle$Rotation = {ctor: 'Rotation'};
-var _user$project$MyStyle$Spring = {ctor: 'Spring'};
+var _user$project$AppStyle$textStyle1 = _elm_lang$html$Html_Attributes$style(
+	_elm_lang$core$Native_List.fromArray(
+		[
+			{ctor: '_Tuple2', _0: 'color', _1: '#000'},
+			{ctor: '_Tuple2', _0: 'border', _1: 'none'},
+			{ctor: '_Tuple2', _0: 'letter-spacing', _1: '.5px'},
+			{ctor: '_Tuple2', _0: 'box-shadow', _1: '0 2px 5px 0 rgba(0,0,0,0.16),0 2px 10px 0 rgba(0,0,0,0.12)'},
+			{ctor: '_Tuple2', _0: 'text-decoration', _1: 'none'},
+			{ctor: '_Tuple2', _0: 'width', _1: '200px'},
+			{ctor: '_Tuple2', _0: 'height', _1: '10px'},
+			{ctor: '_Tuple2', _0: 'padding', _1: '10px 0'},
+			{ctor: '_Tuple2', _0: 'font-size', _1: '.7em'},
+			{ctor: '_Tuple2', _0: 'text-align', _1: 'left'},
+			{ctor: '_Tuple2', _0: 'cursor', _1: 'pointer'}
+		]));
+var _user$project$AppStyle$floatLeft = {ctor: '_Tuple2', _0: 'float', _1: 'left'};
+var _user$project$AppStyle$statusButton = function (connected) {
+	return _elm_lang$html$Html_Attributes$style(
+		_elm_lang$core$Native_List.fromArray(
+			[
+				{ctor: '_Tuple2', _0: 'color', _1: '#fff'},
+				{ctor: '_Tuple2', _0: 'border', _1: 'none'},
+				{ctor: '_Tuple2', _0: 'letter-spacing', _1: '.5px'},
+				{ctor: '_Tuple2', _0: 'text-transform', _1: 'uppercase'},
+				{ctor: '_Tuple2', _0: 'box-shadow', _1: '0 2px 5px 0 rgba(0,0,0,0.16),0 2px 10px 0 rgba(0,0,0,0.12)'},
+				{ctor: '_Tuple2', _0: 'text-decoration', _1: 'none'},
+				{
+				ctor: '_Tuple2',
+				_0: 'background-color',
+				_1: connected ? '#66BB6A' : '#BDBDBD'
+			},
+				{ctor: '_Tuple2', _0: 'width', _1: '90px'},
+				{ctor: '_Tuple2', _0: 'height', _1: '30px'},
+				{ctor: '_Tuple2', _0: 'padding', _1: '10px 0'},
+				{ctor: '_Tuple2', _0: 'font-size', _1: '.7em'},
+				{ctor: '_Tuple2', _0: 'text-align', _1: 'center'},
+				{ctor: '_Tuple2', _0: 'cursor', _1: 'pointer'}
+			]));
+};
+var _user$project$AppStyle$buttonStyle3 = _elm_lang$html$Html_Attributes$style(
+	_elm_lang$core$Native_List.fromArray(
+		[
+			{ctor: '_Tuple2', _0: 'color', _1: '#fff'},
+			{ctor: '_Tuple2', _0: 'border', _1: 'none'},
+			{ctor: '_Tuple2', _0: 'letter-spacing', _1: '.5px'},
+			{ctor: '_Tuple2', _0: 'text-transform', _1: 'uppercase'},
+			{ctor: '_Tuple2', _0: 'box-shadow', _1: '0 2px 5px 0 rgba(0,0,0,0.16),0 2px 10px 0 rgba(0,0,0,0.12)'},
+			{ctor: '_Tuple2', _0: 'text-decoration', _1: 'none'},
+			{ctor: '_Tuple2', _0: 'background-color', _1: '#5C6BC0'},
+			{ctor: '_Tuple2', _0: 'width', _1: '90px'},
+			{ctor: '_Tuple2', _0: 'height', _1: '30px'},
+			{ctor: '_Tuple2', _0: 'padding', _1: '10px 0'},
+			{ctor: '_Tuple2', _0: 'font-size', _1: '.7em'},
+			{ctor: '_Tuple2', _0: 'text-align', _1: 'center'},
+			{ctor: '_Tuple2', _0: 'cursor', _1: 'pointer'},
+			{ctor: '_Tuple2', _0: 'margin', _1: '5px'}
+		]));
+var _user$project$AppStyle$buttonStyle2 = _elm_lang$html$Html_Attributes$style(
+	_elm_lang$core$Native_List.fromArray(
+		[
+			{ctor: '_Tuple2', _0: 'color', _1: '#fff'},
+			{ctor: '_Tuple2', _0: 'border', _1: 'none'},
+			{ctor: '_Tuple2', _0: 'letter-spacing', _1: '.5px'},
+			{ctor: '_Tuple2', _0: 'text-transform', _1: 'uppercase'},
+			{ctor: '_Tuple2', _0: 'box-shadow', _1: '0 2px 5px 0 rgba(0,0,0,0.16),0 2px 10px 0 rgba(0,0,0,0.12)'},
+			{ctor: '_Tuple2', _0: 'text-decoration', _1: 'none'},
+			{ctor: '_Tuple2', _0: 'background-color', _1: '#EF5350'},
+			{ctor: '_Tuple2', _0: 'width', _1: '90px'},
+			{ctor: '_Tuple2', _0: 'height', _1: '30px'},
+			{ctor: '_Tuple2', _0: 'padding', _1: '10px 0'},
+			{ctor: '_Tuple2', _0: 'float', _1: 'right'},
+			{ctor: '_Tuple2', _0: 'font-size', _1: '.7em'},
+			{ctor: '_Tuple2', _0: 'text-align', _1: 'center'},
+			{ctor: '_Tuple2', _0: 'cursor', _1: 'pointer'}
+		]));
+var _user$project$AppStyle$buttonStyle1 = _elm_lang$html$Html_Attributes$style(
+	_elm_lang$core$Native_List.fromArray(
+		[
+			{ctor: '_Tuple2', _0: 'color', _1: '#fff'},
+			{ctor: '_Tuple2', _0: 'border', _1: 'none'},
+			{ctor: '_Tuple2', _0: 'letter-spacing', _1: '.5px'},
+			{ctor: '_Tuple2', _0: 'text-transform', _1: 'uppercase'},
+			{ctor: '_Tuple2', _0: 'box-shadow', _1: '0 2px 5px 0 rgba(0,0,0,0.16),0 2px 10px 0 rgba(0,0,0,0.12)'},
+			{ctor: '_Tuple2', _0: 'text-decoration', _1: 'none'},
+			{ctor: '_Tuple2', _0: 'background-color', _1: '#5C6BC0'},
+			{ctor: '_Tuple2', _0: 'width', _1: '90px'},
+			{ctor: '_Tuple2', _0: 'height', _1: '30px'},
+			{ctor: '_Tuple2', _0: 'padding', _1: '10px 0'},
+			{ctor: '_Tuple2', _0: 'font-size', _1: '.7em'},
+			{ctor: '_Tuple2', _0: 'text-align', _1: 'center'},
+			{ctor: '_Tuple2', _0: 'cursor', _1: 'pointer'}
+		]));
+var _user$project$AppStyle$symbolColor = '#ffffff';
+var _user$project$AppStyle$strokeWidthSize = 20;
+var _user$project$AppStyle$defaultTileBg = '#9F9F9F';
+var _user$project$AppStyle$winTileBg = '#2bbbad';
+var _user$project$AppStyle$Rotation = {ctor: 'Rotation'};
+var _user$project$AppStyle$Spring = {ctor: 'Spring'};
+var _user$project$AppConfig$serverAddress = '172.17.1.12:8080';
+var _user$project$Api$getCells = function (model) {
+	var _p0 = model.board;
+	switch (_p0.ctor) {
+		case 'PlayBoard':
+			return _p0._0;
+		case 'EmptyBoard':
+			return _p0._0;
+		case 'ErrorBoard':
+			return _p0._0;
+		case 'TieBoard':
+			return _p0._0;
+		default:
+			return _p0._0;
+	}
+};
+var _user$project$Api$isYou = F2(
+	function (sender, receiver) {
+		var _p1 = _elm_lang$core$Native_Utils.eq(sender, receiver);
+		if (_p1 === true) {
+			return 'You';
+		} else {
+			return sender;
+		}
+	});
+var _user$project$Api$arrayGetOrElse = F3(
+	function (index, $default, players) {
+		var _p2 = A2(_elm_lang$core$Array$get, index, players);
+		if (_p2.ctor === 'Just') {
+			return _p2._0;
+		} else {
+			return $default;
+		}
+	});
+var _user$project$Api$renderPlayerName = F4(
+	function (index, $default, players, player) {
+		var v = A3(_user$project$Api$arrayGetOrElse, index, $default, players);
+		return A2(_user$project$Api$isYou, v, player);
+	});
+var _user$project$Api$playerJoiningStatus = F2(
+	function (players, playerName) {
+		return A2(
+			_elm_lang$core$Basics_ops['++'],
+			A4(
+				_user$project$Api$renderPlayerName,
+				0,
+				'_',
+				players,
+				_elm_lang$core$Basics$fst(playerName)),
+			A2(
+				_elm_lang$core$Basics_ops['++'],
+				' & ',
+				A4(
+					_user$project$Api$renderPlayerName,
+					1,
+					' (waiting for other to join)',
+					players,
+					_elm_lang$core$Basics$fst(playerName))));
+	});
+var _user$project$Api$lastMoveToMessage = function (lastMove) {
+	return A2(
+		_elm_lang$core$Basics_ops['++'],
+		'Position = [',
+		A2(
+			_elm_lang$core$Basics_ops['++'],
+			_elm_lang$core$Basics$toString(
+				_elm_lang$core$Basics$fst(lastMove)),
+			A2(
+				_elm_lang$core$Basics_ops['++'],
+				',',
+				A2(
+					_elm_lang$core$Basics_ops['++'],
+					_elm_lang$core$Basics$toString(
+						_elm_lang$core$Basics$snd(lastMove)),
+					']'))));
+};
+var _user$project$Api$playMode = F3(
+	function (playerMode, connectionStatus, startRequest) {
+		var _p3 = playerMode;
+		if (_p3.ctor === 'SinglePlayer') {
+			return 'New';
+		} else {
+			var _p4 = connectionStatus;
+			if (_p4 === true) {
+				return startRequest ? 'Ok' : 'New';
+			} else {
+				return 'Join';
+			}
+		}
+	});
+var _user$project$Api$isPositionShared = function (v) {
+	return A2(_elm_lang$core$String$contains, 'Position', v);
+};
+var _user$project$Api$updatePlayers = function (v) {
+	return v.allMembers;
+};
+var _user$project$Api$isOnline = function (v) {
+	return A2(_elm_lang$core$String$contains, 'Joined', v.messageType) ? true : (A2(_elm_lang$core$String$contains, 'Left', v.messageType) ? false : false);
+};
+var _user$project$Api$wSocketLink = F2(
+	function (name, code) {
+		return A2(
+			_elm_lang$core$Basics_ops['++'],
+			'ws://',
+			A2(
+				_elm_lang$core$Basics_ops['++'],
+				_user$project$AppConfig$serverAddress,
+				A2(
+					_elm_lang$core$Basics_ops['++'],
+					'/game/join?name=',
+					A2(
+						_elm_lang$core$Basics_ops['++'],
+						name,
+						A2(_elm_lang$core$Basics_ops['++'], '&id=', code)))));
+	});
+var _user$project$Api$sendMessage = F3(
+	function (playerName, gameCode, msg) {
+		return A2(
+			_elm_lang$websocket$WebSocket$send,
+			A2(
+				_user$project$Api$wSocketLink,
+				_elm_lang$core$Basics$fst(playerName),
+				gameCode),
+			msg);
+	});
+var _user$project$Api$decodeGameCode = A2(
+	_elm_lang$core$Json_Decode$at,
+	_elm_lang$core$Native_List.fromArray(
+		['code']),
+	_elm_lang$core$Json_Decode$string);
+var _user$project$Api$defaultSubscriptions = F3(
+	function (model, a, b) {
+		return _elm_lang$core$Native_List.fromArray(
+			[
+				_elm_lang$window$Window$resizes(a),
+				_elm_lang$animation_frame$AnimationFrame$times(b)
+			]);
+	});
+var _user$project$Api$socketSubscriptions = F4(
+	function (model, a, b, c) {
+		return A2(
+			_elm_lang$core$List_ops['::'],
+			A2(
+				_elm_lang$websocket$WebSocket$listen,
+				A2(
+					_user$project$Api$wSocketLink,
+					_elm_lang$core$Basics$fst(model.playerName),
+					model.gameCode),
+				a),
+			A3(_user$project$Api$defaultSubscriptions, model, b, c));
+	});
 var _user$project$Api$winCellSequence = _elm_lang$core$Native_List.fromArray(
 	[
 		_elm_lang$core$Native_List.fromArray(
@@ -15803,16 +17402,16 @@ var _user$project$Api$isSubsetOf = F2(
 	function (mainl, subl) {
 		isSubsetOf:
 		while (true) {
-			var _p0 = subl;
-			if (_p0.ctor === '[]') {
+			var _p5 = subl;
+			if (_p5.ctor === '[]') {
 				return true;
 			} else {
-				var _p1 = A2(_elm_lang$core$List$member, _p0._0, mainl);
-				if (_p1 === true) {
-					var _v2 = mainl,
-						_v3 = _p0._1;
-					mainl = _v2;
-					subl = _v3;
+				var _p6 = A2(_elm_lang$core$List$member, _p5._0, mainl);
+				if (_p6 === true) {
+					var _v7 = mainl,
+						_v8 = _p5._1;
+					mainl = _v7;
+					subl = _v8;
 					continue isSubsetOf;
 				} else {
 					return false;
@@ -15821,9 +17420,9 @@ var _user$project$Api$isSubsetOf = F2(
 		}
 	});
 var _user$project$Api$getWinnerBoardSequence = function (board) {
-	var _p2 = board;
-	if (_p2.ctor === 'WinBoard') {
-		return _p2._2;
+	var _p7 = board;
+	if (_p7.ctor === 'WinBoard') {
+		return _p7._2;
 	} else {
 		return _elm_lang$core$Native_List.fromArray(
 			[]);
@@ -15847,24 +17446,24 @@ var _user$project$Api$whoWin = F3(
 	function (player, cells, l) {
 		whoWin:
 		while (true) {
-			var _p3 = l;
-			if (_p3.ctor === '[]') {
+			var _p8 = l;
+			if (_p8.ctor === '[]') {
 				return _elm_lang$core$Maybe$Nothing;
 			} else {
-				var _p5 = _p3._0;
-				var _p4 = A2(
+				var _p10 = _p8._0;
+				var _p9 = A2(
 					_user$project$Api$isSubsetOf,
 					A2(_user$project$Api$filterCellsByPlayer, player, cells),
-					_p5);
-				if (_p4 === true) {
-					return _elm_lang$core$Maybe$Just(_p5);
+					_p10);
+				if (_p9 === true) {
+					return _elm_lang$core$Maybe$Just(_p10);
 				} else {
-					var _v7 = player,
-						_v8 = cells,
-						_v9 = _p3._1;
-					player = _v7;
-					cells = _v8;
-					l = _v9;
+					var _v12 = player,
+						_v13 = cells,
+						_v14 = _p8._1;
+					player = _v12;
+					cells = _v13;
+					l = _v14;
 					continue whoWin;
 				}
 			}
@@ -15874,6 +17473,47 @@ var _user$project$Api$Cell = F3(
 	function (a, b, c) {
 		return {position: a, player: b, animation: c};
 	});
+var _user$project$Api$Member = F2(
+	function (a, b) {
+		return {name: a, playerSymbol: b};
+	});
+var _user$project$Api$MessageMember = F4(
+	function (a, b, c, d) {
+		return {messageType: a, member: b, gameId: c, allMembers: d};
+	});
+var _user$project$Api$JsonMessageContent = F4(
+	function (a, b, c, d) {
+		return {messageType: a, sender: b, gameId: c, message: d};
+	});
+var _user$project$Api$jsonMessageContentDecorder = A5(
+	_elm_lang$core$Json_Decode$object4,
+	_user$project$Api$JsonMessageContent,
+	A2(_elm_lang$core$Json_Decode_ops[':='], '$type', _elm_lang$core$Json_Decode$string),
+	A2(_elm_lang$core$Json_Decode_ops[':='], 'sender', _elm_lang$core$Json_Decode$string),
+	A2(_elm_lang$core$Json_Decode_ops[':='], 'gameId', _elm_lang$core$Json_Decode$string),
+	A2(_elm_lang$core$Json_Decode_ops[':='], 'message', _elm_lang$core$Json_Decode$string));
+var _user$project$Api$PlaySymbol = function (a) {
+	return {messageType: a};
+};
+var _user$project$Api$playSymbolDecoder = A2(
+	_elm_lang$core$Json_Decode$object1,
+	_user$project$Api$PlaySymbol,
+	A2(_elm_lang$core$Json_Decode_ops[':='], '$type', _elm_lang$core$Json_Decode$string));
+var _user$project$Api$jsonMessageMemberDecoder1 = A3(
+	_elm_lang$core$Json_Decode$object2,
+	_user$project$Api$Member,
+	A2(_elm_lang$core$Json_Decode_ops[':='], 'name', _elm_lang$core$Json_Decode$string),
+	A2(_elm_lang$core$Json_Decode_ops[':='], 'playerSymbol', _user$project$Api$playSymbolDecoder));
+var _user$project$Api$jsonMessageMemberDecoder = A5(
+	_elm_lang$core$Json_Decode$object4,
+	_user$project$Api$MessageMember,
+	A2(_elm_lang$core$Json_Decode_ops[':='], '$type', _elm_lang$core$Json_Decode$string),
+	A2(_elm_lang$core$Json_Decode_ops[':='], 'member', _user$project$Api$jsonMessageMemberDecoder1),
+	A2(_elm_lang$core$Json_Decode_ops[':='], 'gameId', _elm_lang$core$Json_Decode$string),
+	A2(
+		_elm_lang$core$Json_Decode_ops[':='],
+		'allMembers',
+		_elm_lang$core$Json_Decode$array(_elm_lang$core$Json_Decode$string)));
 var _user$project$Api$ErrorBoard = F2(
 	function (a, b) {
 		return {ctor: 'ErrorBoard', _0: a, _1: b};
@@ -15889,9 +17529,10 @@ var _user$project$Api$WinBoard = F3(
 var _user$project$Api$PlayBoard = function (a) {
 	return {ctor: 'PlayBoard', _0: a};
 };
-var _user$project$Api$EmptyBoard = function (a) {
-	return {ctor: 'EmptyBoard', _0: a};
-};
+var _user$project$Api$EmptyBoard = F2(
+	function (a, b) {
+		return {ctor: 'EmptyBoard', _0: a, _1: b};
+	});
 var _user$project$Api$NoPlayer = {ctor: 'NoPlayer'};
 var _user$project$Api$hasOccupied = F2(
 	function (position, cells) {
@@ -15902,9 +17543,9 @@ var _user$project$Api$hasOccupied = F2(
 					return _elm_lang$core$Native_Utils.eq(currentCell.position, position);
 				},
 				cells));
-		var _p6 = cell;
-		if (_p6.ctor === 'Just') {
-			return _p6._0.player;
+		var _p11 = cell;
+		if (_p11.ctor === 'Just') {
+			return _p11._0.player;
 		} else {
 			return _user$project$Api$NoPlayer;
 		}
@@ -15924,61 +17565,145 @@ var _user$project$Api$defaultCells = _elm_lang$core$Native_List.fromArray(
 		_user$project$Api$Cell,
 		{ctor: '_Tuple2', _0: 0, _1: 0},
 		_user$project$Api$NoPlayer,
-		_user$project$MyStyle$initialWidgetStyle),
+		_user$project$AppStyle$initialWidgetStyle),
 		A3(
 		_user$project$Api$Cell,
 		{ctor: '_Tuple2', _0: 0, _1: 1},
 		_user$project$Api$NoPlayer,
-		_user$project$MyStyle$initialWidgetStyle),
+		_user$project$AppStyle$initialWidgetStyle),
 		A3(
 		_user$project$Api$Cell,
 		{ctor: '_Tuple2', _0: 0, _1: 2},
 		_user$project$Api$NoPlayer,
-		_user$project$MyStyle$initialWidgetStyle),
+		_user$project$AppStyle$initialWidgetStyle),
 		A3(
 		_user$project$Api$Cell,
 		{ctor: '_Tuple2', _0: 1, _1: 0},
 		_user$project$Api$NoPlayer,
-		_user$project$MyStyle$initialWidgetStyle),
+		_user$project$AppStyle$initialWidgetStyle),
 		A3(
 		_user$project$Api$Cell,
 		{ctor: '_Tuple2', _0: 1, _1: 1},
 		_user$project$Api$NoPlayer,
-		_user$project$MyStyle$initialWidgetStyle),
+		_user$project$AppStyle$initialWidgetStyle),
 		A3(
 		_user$project$Api$Cell,
 		{ctor: '_Tuple2', _0: 1, _1: 2},
 		_user$project$Api$NoPlayer,
-		_user$project$MyStyle$initialWidgetStyle),
+		_user$project$AppStyle$initialWidgetStyle),
 		A3(
 		_user$project$Api$Cell,
 		{ctor: '_Tuple2', _0: 2, _1: 0},
 		_user$project$Api$NoPlayer,
-		_user$project$MyStyle$initialWidgetStyle),
+		_user$project$AppStyle$initialWidgetStyle),
 		A3(
 		_user$project$Api$Cell,
 		{ctor: '_Tuple2', _0: 2, _1: 1},
 		_user$project$Api$NoPlayer,
-		_user$project$MyStyle$initialWidgetStyle),
+		_user$project$AppStyle$initialWidgetStyle),
 		A3(
 		_user$project$Api$Cell,
 		{ctor: '_Tuple2', _0: 2, _1: 2},
 		_user$project$Api$NoPlayer,
-		_user$project$MyStyle$initialWidgetStyle)
+		_user$project$AppStyle$initialWidgetStyle)
 	]);
+var _user$project$Api$joinGame = F3(
+	function (model, code, b) {
+		return _elm_lang$core$String$isEmpty(
+			_elm_lang$core$Basics$fst(model.playerName)) ? _elm_lang$core$Native_Utils.update(
+			model,
+			{
+				board: A2(_user$project$Api$ErrorBoard, _user$project$Api$defaultCells, 'Name Must not be Empty')
+			}) : (_elm_lang$core$String$isEmpty(model.gameCode) ? _elm_lang$core$Native_Utils.update(
+			model,
+			{
+				board: A2(_user$project$Api$ErrorBoard, _user$project$Api$defaultCells, 'Code is mandatory to join')
+			}) : _elm_lang$core$Native_Utils.update(
+			model,
+			{isConnected: true, board: b, gameCode: code}));
+	});
+var _user$project$Api$getRandomGameCode = F3(
+	function (model, a, b) {
+		var name = _elm_lang$core$Basics$fst(model.playerName);
+		var url = A2(
+			_elm_lang$core$Basics_ops['++'],
+			'http://',
+			A2(
+				_elm_lang$core$Basics_ops['++'],
+				_user$project$AppConfig$serverAddress,
+				A2(_elm_lang$core$Basics_ops['++'], '/game/code/request?name=', name)));
+		return _elm_lang$core$String$isEmpty(name) ? {
+			ctor: '_Tuple2',
+			_0: _elm_lang$core$Native_Utils.update(
+				model,
+				{
+					board: A2(_user$project$Api$ErrorBoard, _user$project$Api$defaultCells, 'Name Must not be Empty')
+				}),
+			_1: _elm_lang$core$Platform_Cmd$none
+		} : {
+			ctor: '_Tuple2',
+			_0: model,
+			_1: A3(
+				_elm_lang$core$Task$perform,
+				a,
+				b,
+				A2(_evancz$elm_http$Http$get, _user$project$Api$decodeGameCode, url))
+		};
+	});
+var _user$project$Api$playMultiPlayerGame = F2(
+	function (position, model) {
+		return model.isConnected ? ((_elm_lang$core$Native_Utils.cmp(
+			_elm_lang$core$Array$length(model.players),
+			1) < 1) ? {
+			ctor: '_Tuple2',
+			_0: _elm_lang$core$Native_Utils.update(
+				model,
+				{
+					board: A2(_user$project$Api$ErrorBoard, _user$project$Api$defaultCells, 'Waiting for other to join')
+				}),
+			_1: _elm_lang$core$Platform_Cmd$none
+		} : (_elm_lang$core$Native_Utils.eq(model.currentPlayer, model.nextPlayer) ? {
+			ctor: '_Tuple2',
+			_0: model,
+			_1: A3(
+				_user$project$Api$sendMessage,
+				model.playerName,
+				model.gameCode,
+				_user$project$Api$lastMoveToMessage(position))
+		} : {
+			ctor: '_Tuple2',
+			_0: _elm_lang$core$Native_Utils.update(
+				model,
+				{
+					board: A2(
+						_user$project$Api$EmptyBoard,
+						_user$project$Api$getCells(model),
+						'Waiting for other player to play')
+				}),
+			_1: _elm_lang$core$Platform_Cmd$none
+		})) : {
+			ctor: '_Tuple2',
+			_0: _elm_lang$core$Native_Utils.update(
+				model,
+				{
+					board: A2(_user$project$Api$ErrorBoard, _user$project$Api$defaultCells, 'You have not joined the game')
+				}),
+			_1: _elm_lang$core$Platform_Cmd$none
+		};
+	});
 var _user$project$Api$PlayerX = {ctor: 'PlayerX'};
 var _user$project$Api$PlayerO = {ctor: 'PlayerO'};
 var _user$project$Api$fetchGameResult = function (cells) {
-	var _p7 = A3(_user$project$Api$whoWin, _user$project$Api$PlayerO, cells, _user$project$Api$winCellSequence);
-	if (_p7.ctor === 'Just') {
-		return A3(_user$project$Api$WinBoard, cells, 'Player O Wins the Game', _p7._0);
+	var _p12 = A3(_user$project$Api$whoWin, _user$project$Api$PlayerO, cells, _user$project$Api$winCellSequence);
+	if (_p12.ctor === 'Just') {
+		return A3(_user$project$Api$WinBoard, cells, 'Player O Wins the Game', _p12._0);
 	} else {
-		var _p8 = A3(_user$project$Api$whoWin, _user$project$Api$PlayerX, cells, _user$project$Api$winCellSequence);
-		if (_p8.ctor === 'Just') {
-			return A3(_user$project$Api$WinBoard, cells, 'Player X Wins the Game', _p8._0);
+		var _p13 = A3(_user$project$Api$whoWin, _user$project$Api$PlayerX, cells, _user$project$Api$winCellSequence);
+		if (_p13.ctor === 'Just') {
+			return A3(_user$project$Api$WinBoard, cells, 'Player X Wins the Game', _p13._0);
 		} else {
-			var _p9 = _user$project$Api$isFinishedBoard(cells);
-			if (_p9 === true) {
+			var _p14 = _user$project$Api$isFinishedBoard(cells);
+			if (_p14 === true) {
 				return A2(_user$project$Api$TieBoard, cells, 'Game Tie');
 			} else {
 				return _user$project$Api$PlayBoard(cells);
@@ -15986,6 +17711,13 @@ var _user$project$Api$fetchGameResult = function (cells) {
 		}
 	}
 };
+var _user$project$Api$playerParser = F3(
+	function (memberMessage, playerName, currentPlayer) {
+		return A2(
+			_elm_lang$core$String$contains,
+			_elm_lang$core$Basics$fst(playerName),
+			memberMessage.member.name) ? (A2(_elm_lang$core$String$contains, 'PlayerO', memberMessage.member.playerSymbol.messageType) ? _user$project$Api$PlayerO : _user$project$Api$PlayerX) : currentPlayer;
+	});
 var _user$project$Api$Failure = function (a) {
 	return {ctor: 'Failure', _0: a};
 };
@@ -15994,19 +17726,19 @@ var _user$project$Api$Success = function (a) {
 };
 var _user$project$Api$plotPlayerCellOnBoard = F3(
 	function (player, position, cells) {
-		var _p10 = A2(_user$project$Api$hasOccupied, position, cells);
-		if (_p10.ctor === 'NoPlayer') {
+		var _p15 = A2(_user$project$Api$hasOccupied, position, cells);
+		if (_p15.ctor === 'NoPlayer') {
 			return _user$project$Api$Success(
 				A2(
 					_elm_lang$core$List$map,
 					function (cell) {
-						var _p11 = _elm_lang$core$Native_Utils.eq(position, cell.position);
-						if (_p11 === true) {
+						var _p16 = _elm_lang$core$Native_Utils.eq(position, cell.position);
+						if (_p16 === true) {
 							return _elm_lang$core$Native_Utils.update(
 								cell,
 								{
 									player: player,
-									animation: A2(_user$project$MyStyle$loadAnimation, _user$project$MyStyle$Spring, cell.animation)
+									animation: A2(_user$project$AppStyle$loadAnimation, _user$project$AppStyle$Spring, cell.animation)
 								});
 						} else {
 							return cell;
@@ -16020,20 +17752,20 @@ var _user$project$Api$plotPlayerCellOnBoard = F3(
 var _user$project$Api$updateBoardModel = F3(
 	function (cells, model, position) {
 		var updatedModel = function () {
-			var _p12 = A3(_user$project$Api$plotPlayerCellOnBoard, model.nextPlayer, position, cells);
-			if (_p12.ctor === 'Success') {
+			var _p17 = A3(_user$project$Api$plotPlayerCellOnBoard, model.nextPlayer, position, cells);
+			if (_p17.ctor === 'Success') {
 				return _elm_lang$core$Native_Utils.update(
 					model,
 					{
 						lastMove: position,
 						nextPlayer: _elm_lang$core$Native_Utils.eq(model.nextPlayer, _user$project$Api$PlayerO) ? _user$project$Api$PlayerX : _user$project$Api$PlayerO,
-						board: _user$project$Api$fetchGameResult(_p12._0)
+						board: _user$project$Api$fetchGameResult(_p17._0)
 					});
 			} else {
 				return _elm_lang$core$Native_Utils.update(
 					model,
 					{
-						board: A2(_user$project$Api$ErrorBoard, cells, _p12._0)
+						board: A2(_user$project$Api$ErrorBoard, cells, _p17._0)
 					});
 			}
 		}();
@@ -16048,27 +17780,142 @@ var _user$project$Api$GameResult = function (a) {
 var _user$project$Api$NotValidMove = function (a) {
 	return {ctor: 'NotValidMove', _0: a};
 };
-var _user$project$Api$Default = {ctor: 'Default'};
+var _user$project$Api$playGame = F2(
+	function (position, model) {
+		var _p18 = model.board;
+		switch (_p18.ctor) {
+			case 'PlayBoard':
+				return {
+					ctor: '_Tuple2',
+					_0: A3(_user$project$Api$updateBoardModel, _p18._0, model, position),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+			case 'EmptyBoard':
+				return {
+					ctor: '_Tuple2',
+					_0: A3(_user$project$Api$updateBoardModel, _p18._0, model, position),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+			case 'ErrorBoard':
+				return {
+					ctor: '_Tuple2',
+					_0: A3(_user$project$Api$updateBoardModel, _p18._0, model, position),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+			case 'TieBoard':
+				return {
+					ctor: '_Tuple2',
+					_0: _elm_lang$core$Native_Utils.update(
+						model,
+						{
+							status: _user$project$Api$NotValidMove(
+								A2(_elm_lang$core$Basics_ops['++'], 'Game Over as match result :', _p18._1))
+						}),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+			default:
+				return {
+					ctor: '_Tuple2',
+					_0: _elm_lang$core$Native_Utils.update(
+						model,
+						{
+							status: _user$project$Api$NotValidMove(
+								A2(_elm_lang$core$Basics_ops['++'], 'Game Over as match result :', _p18._1))
+						}),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+		}
+	});
+var _user$project$Api$Default = function (a) {
+	return {ctor: 'Default', _0: a};
+};
 var _user$project$Api$LastMove = function (a) {
 	return {ctor: 'LastMove', _0: a};
 };
 var _user$project$Api$buildStatusFromResult = F2(
 	function (board, position) {
-		var _p13 = board;
-		switch (_p13.ctor) {
+		var _p19 = board;
+		switch (_p19.ctor) {
 			case 'TieBoard':
-				return _user$project$Api$GameResult(_p13._1);
+				return _user$project$Api$GameResult(_p19._1);
 			case 'WinBoard':
-				return _user$project$Api$GameResult(_p13._1);
+				return _user$project$Api$GameResult(_p19._1);
 			case 'PlayBoard':
 				return _user$project$Api$LastMove(
 					_elm_lang$core$Basics$toString(position));
 			case 'EmptyBoard':
-				return _user$project$Api$Default;
+				return _user$project$Api$Default(_p19._1);
 			default:
 				return _user$project$Api$NotValidMove(
-					_elm_lang$core$Basics$toString(_p13._1));
+					_elm_lang$core$Basics$toString(_p19._1));
 		}
+	});
+var _user$project$Api$MultiPlayer = {ctor: 'MultiPlayer'};
+var _user$project$Api$SinglePlayer = {ctor: 'SinglePlayer'};
+var _user$project$Api$EventMessage = function (a) {
+	return {ctor: 'EventMessage', _0: a};
+};
+var _user$project$Api$ChatMessage = function (a) {
+	return {ctor: 'ChatMessage', _0: a};
+};
+var _user$project$UI$cellMap = F2(
+	function (time, cell) {
+		return _elm_lang$core$Native_Utils.update(
+			cell,
+			{
+				animation: A2(_mdgriffith$elm_style_animation$Style$tick, time, cell.animation)
+			});
+	});
+var _user$project$UI$cellAnimation = F2(
+	function (time, cells) {
+		return A2(
+			_elm_lang$core$List$map,
+			_user$project$UI$cellMap(time),
+			cells);
+	});
+var _user$project$UI$menuAnimation = F2(
+	function (model, flag) {
+		return flag ? {
+			ctor: '_Tuple2',
+			_0: _elm_lang$core$Native_Utils.update(
+				model,
+				{
+					style: A2(
+						_mdgriffith$elm_style_animation$Style$on,
+						model.style,
+						A2(
+							_mdgriffith$elm_style_animation$Style$to,
+							_user$project$AppStyle$menuStyles.closed,
+							A2(
+								_mdgriffith$elm_style_animation$Style$easing,
+								function (x) {
+									return x;
+								},
+								A2(_mdgriffith$elm_style_animation$Style$duration, _elm_lang$core$Time$second / 5, _mdgriffith$elm_style_animation$Style$animate)))),
+					menu: _elm_lang$core$Basics$not(flag)
+				}),
+			_1: _elm_lang$core$Platform_Cmd$none
+		} : {
+			ctor: '_Tuple2',
+			_0: _elm_lang$core$Native_Utils.update(
+				model,
+				{
+					style: A2(
+						_mdgriffith$elm_style_animation$Style$on,
+						model.style,
+						A2(
+							_mdgriffith$elm_style_animation$Style$to,
+							_user$project$AppStyle$menuStyles.open,
+							A2(
+								_mdgriffith$elm_style_animation$Style$easing,
+								function (x) {
+									return x;
+								},
+								A2(_mdgriffith$elm_style_animation$Style$duration, _elm_lang$core$Time$second / 5, _mdgriffith$elm_style_animation$Style$animate)))),
+					menu: _elm_lang$core$Basics$not(flag)
+				}),
+			_1: _elm_lang$core$Platform_Cmd$none
+		};
 	});
 var _user$project$UI$px = function (v) {
 	return A2(
@@ -16115,7 +17962,7 @@ var _user$project$Main$statusToMessage = function (status) {
 					[
 						{ctor: '_Tuple2', _0: 'color', _1: '#f57f17'}
 					]),
-				_1: 'New Game...'
+				_1: _p0._0
 			};
 		case 'LastMove':
 			return {
@@ -16155,49 +18002,785 @@ var _user$project$Main$statusToMessage = function (status) {
 			};
 	}
 };
-var _user$project$Main$cellMap = F2(
-	function (time, cell) {
-		return _elm_lang$core$Native_Utils.update(
-			cell,
-			{
-				animation: A2(_mdgriffith$elm_style_animation$Style$tick, time, cell.animation)
-			});
+var _user$project$Main$socketMessageHandler = F2(
+	function (model, str) {
+		var newModel = function () {
+			var _p1 = A2(_elm_lang$core$Json_Decode$decodeString, _user$project$Api$jsonMessageContentDecorder, str);
+			if (_p1.ctor === 'Err') {
+				var _p2 = A2(_elm_lang$core$Json_Decode$decodeString, _user$project$Api$jsonMessageMemberDecoder, str);
+				if (_p2.ctor === 'Err') {
+					return {
+						ctor: '_Tuple2',
+						_0: _elm_lang$core$Native_Utils.update(
+							model,
+							{
+								messages: A2(
+									_elm_lang$core$List_ops['::'],
+									_elm_lang$core$Basics$toString(_p2._0),
+									model.messages)
+							}),
+						_1: _elm_lang$core$Platform_Cmd$none
+					};
+				} else {
+					var _p3 = _p2._0;
+					return (_elm_lang$core$Native_Utils.cmp(
+						_elm_lang$core$Array$length(_p3.allMembers),
+						1) < 1) ? {
+						ctor: '_Tuple2',
+						_0: _elm_lang$core$Native_Utils.update(
+							model,
+							{
+								messages: A2(
+									_elm_lang$core$List_ops['::'],
+									_elm_lang$core$Basics$toString(_p3),
+									model.messages),
+								currentPlayer: A3(_user$project$Api$playerParser, _p3, model.playerName, model.currentPlayer),
+								board: A2(
+									_user$project$Api$EmptyBoard,
+									_user$project$Api$defaultCells,
+									A2(_user$project$Api$playerJoiningStatus, _p3.allMembers, model.playerName)),
+								connectionStatus: _user$project$Api$isOnline(_p3),
+								players: _user$project$Api$updatePlayers(_p3)
+							}),
+						_1: _elm_lang$core$Platform_Cmd$none
+					} : {
+						ctor: '_Tuple2',
+						_0: _elm_lang$core$Native_Utils.update(
+							model,
+							{
+								messages: A2(
+									_elm_lang$core$List_ops['::'],
+									_elm_lang$core$Basics$toString(_p3),
+									model.messages),
+								currentPlayer: A3(_user$project$Api$playerParser, _p3, model.playerName, model.currentPlayer),
+								board: A2(
+									_user$project$Api$EmptyBoard,
+									_user$project$Api$defaultCells,
+									A2(
+										_elm_lang$core$Basics_ops['++'],
+										A2(_user$project$Api$playerJoiningStatus, _p3.allMembers, model.playerName),
+										'! Ready to play')),
+								connectionStatus: _user$project$Api$isOnline(_p3),
+								players: _user$project$Api$updatePlayers(_p3)
+							}),
+						_1: _elm_lang$core$Platform_Cmd$none
+					};
+				}
+			} else {
+				var _p6 = _p1._0;
+				var positionMessage = _p6.message;
+				var remotePosition = function () {
+					if (_user$project$Api$isPositionShared(positionMessage)) {
+						var _p4 = A2(
+							_elm_lang$core$Array$get,
+							1,
+							_elm_lang$core$Array$fromList(
+								A2(_elm_lang$core$String$split, '=', positionMessage)));
+						if (_p4.ctor === 'Just') {
+							var _p5 = A2(
+								_elm_lang$core$Json_Decode$decodeString,
+								A3(
+									_elm_lang$core$Json_Decode$tuple2,
+									F2(
+										function (v0, v1) {
+											return {ctor: '_Tuple2', _0: v0, _1: v1};
+										}),
+									_elm_lang$core$Json_Decode$int,
+									_elm_lang$core$Json_Decode$int),
+								_p4._0);
+							if (_p5.ctor === 'Err') {
+								return {
+									ctor: '_Tuple2',
+									_0: _elm_lang$core$Native_Utils.update(
+										model,
+										{
+											messages: A2(
+												_elm_lang$core$List_ops['::'],
+												_elm_lang$core$Basics$toString(_p5._0),
+												model.messages)
+										}),
+									_1: _elm_lang$core$Platform_Cmd$none
+								};
+							} else {
+								var b = _elm_lang$core$Native_Utils.update(
+									model,
+									{
+										messages: A2(
+											_elm_lang$core$List_ops['::'],
+											_elm_lang$core$Basics$toString(str),
+											model.messages)
+									});
+								return A2(_user$project$Api$playGame, _p5._0, b);
+							}
+						} else {
+							return {
+								ctor: '_Tuple2',
+								_0: _elm_lang$core$Native_Utils.update(
+									model,
+									{
+										messages: A2(
+											_elm_lang$core$List_ops['::'],
+											_elm_lang$core$Basics$toString('Nothing received'),
+											model.messages)
+									}),
+								_1: _elm_lang$core$Platform_Cmd$none
+							};
+						}
+					} else {
+						if (A2(_elm_lang$core$String$contains, 'Game.Reset', positionMessage)) {
+							return {
+								ctor: '_Tuple2',
+								_0: _elm_lang$core$Native_Utils.update(
+									model,
+									{
+										board: A2(
+											_user$project$Api$EmptyBoard,
+											_user$project$Api$defaultCells,
+											A2(
+												_elm_lang$core$Basics_ops['++'],
+												'Game has been rest by ',
+												A2(
+													_user$project$Api$isYou,
+													_p6.sender,
+													_elm_lang$core$Basics$fst(model.playerName)))),
+										messages: A2(
+											_elm_lang$core$List_ops['::'],
+											_elm_lang$core$Basics$toString(_p6),
+											model.messages)
+									}),
+								_1: _elm_lang$core$Platform_Cmd$none
+							};
+						} else {
+							return {
+								ctor: '_Tuple2',
+								_0: _elm_lang$core$Native_Utils.update(
+									model,
+									{
+										messages: A2(
+											_elm_lang$core$List_ops['::'],
+											_elm_lang$core$Basics$toString(_p6),
+											model.messages)
+									}),
+								_1: _elm_lang$core$Platform_Cmd$none
+							};
+						}
+					}
+				}();
+				return remotePosition;
+			}
+		}();
+		return newModel;
 	});
-var _user$project$Main$doAnimation = F3(
-	function (time, cells, lastMove) {
-		return A2(
-			_elm_lang$core$List$map,
-			_user$project$Main$cellMap(time),
-			cells);
-	});
-var _user$project$Main$Model = F5(
-	function (a, b, c, d, e) {
-		return {status: a, nextPlayer: b, board: c, lastMove: d, screenSize: e};
-	});
+var _user$project$Main$Model = function (a) {
+	return function (b) {
+		return function (c) {
+			return function (d) {
+				return function (e) {
+					return function (f) {
+						return function (g) {
+							return function (h) {
+								return function (i) {
+									return function (j) {
+										return function (k) {
+											return function (l) {
+												return function (m) {
+													return function (n) {
+														return function (o) {
+															return function (p) {
+																return function (q) {
+																	return function (r) {
+																		return function (s) {
+																			return function (t) {
+																				return {status: a, nextPlayer: b, board: c, lastMove: d, screenSize: e, playerMode: f, connectionStatus: g, startRequest: h, isCreateMode: i, gameCode: j, inputMessage: k, playerName: l, messages: m, displayMessages: n, isConnected: o, style: p, menu: q, players: r, playLock: s, currentPlayer: t};
+																			};
+																		};
+																	};
+																};
+															};
+														};
+													};
+												};
+											};
+										};
+									};
+								};
+							};
+						};
+					};
+				};
+			};
+		};
+	};
+};
+var _user$project$Main$ShowOrHide = function (a) {
+	return {ctor: 'ShowOrHide', _0: a};
+};
+var _user$project$Main$HideComponent = function (a) {
+	return {ctor: 'HideComponent', _0: a};
+};
+var _user$project$Main$InputGameCode = function (a) {
+	return {ctor: 'InputGameCode', _0: a};
+};
+var _user$project$Main$InputPlayerName = function (a) {
+	return {ctor: 'InputPlayerName', _0: a};
+};
+var _user$project$Main$InputMessage = function (a) {
+	return {ctor: 'InputMessage', _0: a};
+};
+var _user$project$Main$ConnectOrDisconnect = {ctor: 'ConnectOrDisconnect'};
+var _user$project$Main$ReceiveMessage = function (a) {
+	return {ctor: 'ReceiveMessage', _0: a};
+};
+var _user$project$Main$SendMessage = {ctor: 'SendMessage'};
+var _user$project$Main$FetchFail = function (a) {
+	return {ctor: 'FetchFail', _0: a};
+};
+var _user$project$Main$FetchSucceed = function (a) {
+	return {ctor: 'FetchSucceed', _0: a};
+};
 var _user$project$Main$Animate = function (a) {
 	return {ctor: 'Animate', _0: a};
 };
-var _user$project$Main$Reset = {ctor: 'Reset'};
-var _user$project$Main$toolBox = function (_p1) {
-	var _p2 = _p1;
-	var gameStatus = _user$project$Main$statusToMessage(
-		A2(_user$project$Api$buildStatusFromResult, _p2.board, _p2.lastMove));
+var _user$project$Main$Resize = function (a) {
+	return {ctor: 'Resize', _0: a};
+};
+var _user$project$Main$sizeTask = A3(_elm_lang$core$Task$perform, _user$project$Main$Resize, _user$project$Main$Resize, _elm_lang$window$Window$size);
+var _user$project$Main$update = F2(
+	function (msg, model) {
+		var _p7 = msg;
+		switch (_p7.ctor) {
+			case 'Played':
+				var _p9 = _p7._0;
+				var _p8 = model.playerMode;
+				if (_p8.ctor === 'SinglePlayer') {
+					return A2(_user$project$Api$playGame, _p9, model);
+				} else {
+					return A2(_user$project$Api$playMultiPlayerGame, _p9, model);
+				}
+			case 'Resize':
+				return {
+					ctor: '_Tuple2',
+					_0: _elm_lang$core$Native_Utils.update(
+						model,
+						{screenSize: _p7._0}),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+			case 'Reset':
+				return model.isConnected ? {
+					ctor: '_Tuple2',
+					_0: model,
+					_1: A3(_user$project$Api$sendMessage, model.playerName, model.gameCode, 'Game.Reset')
+				} : {
+					ctor: '_Tuple2',
+					_0: _elm_lang$core$Native_Utils.update(
+						model,
+						{
+							board: A2(_user$project$Api$EmptyBoard, _user$project$Api$defaultCells, 'New Game')
+						}),
+					_1: _user$project$Main$sizeTask
+				};
+			case 'Animate':
+				var _p13 = _p7._0;
+				var _p10 = model.board;
+				switch (_p10.ctor) {
+					case 'PlayBoard':
+						return {
+							ctor: '_Tuple2',
+							_0: _elm_lang$core$Native_Utils.update(
+								model,
+								{
+									board: _user$project$Api$PlayBoard(
+										A2(_user$project$UI$cellAnimation, _p13, _p10._0)),
+									style: A2(_mdgriffith$elm_style_animation$Style$tick, _p13, model.style)
+								}),
+							_1: _elm_lang$core$Platform_Cmd$none
+						};
+					case 'EmptyBoard':
+						return {
+							ctor: '_Tuple2',
+							_0: _elm_lang$core$Native_Utils.update(
+								model,
+								{
+									style: A2(_mdgriffith$elm_style_animation$Style$tick, _p13, model.style)
+								}),
+							_1: _elm_lang$core$Platform_Cmd$none
+						};
+					case 'ErrorBoard':
+						return {
+							ctor: '_Tuple2',
+							_0: _elm_lang$core$Native_Utils.update(
+								model,
+								{
+									board: A2(
+										_user$project$Api$ErrorBoard,
+										A2(_user$project$UI$cellAnimation, _p13, _p10._0),
+										_p10._1),
+									style: A2(_mdgriffith$elm_style_animation$Style$tick, _p13, model.style)
+								}),
+							_1: _elm_lang$core$Platform_Cmd$none
+						};
+					case 'TieBoard':
+						var _p11 = _p10._1;
+						return {
+							ctor: '_Tuple2',
+							_0: _elm_lang$core$Native_Utils.update(
+								model,
+								{
+									board: A2(
+										_user$project$Api$TieBoard,
+										A2(_user$project$UI$cellAnimation, _p13, _p10._0),
+										_p11),
+									status: _user$project$Api$NotValidMove(
+										A2(_elm_lang$core$Basics_ops['++'], 'Game Over as match result :', _p11)),
+									style: A2(_mdgriffith$elm_style_animation$Style$tick, _p13, model.style)
+								}),
+							_1: _elm_lang$core$Platform_Cmd$none
+						};
+					default:
+						var _p12 = _p10._1;
+						return {
+							ctor: '_Tuple2',
+							_0: _elm_lang$core$Native_Utils.update(
+								model,
+								{
+									board: A3(
+										_user$project$Api$WinBoard,
+										A2(_user$project$UI$cellAnimation, _p13, _p10._0),
+										_p12,
+										_p10._2),
+									status: _user$project$Api$NotValidMove(
+										A2(_elm_lang$core$Basics_ops['++'], 'Game Over as match result :', _p12)),
+									style: A2(_mdgriffith$elm_style_animation$Style$tick, _p13, model.style)
+								}),
+							_1: _elm_lang$core$Platform_Cmd$none
+						};
+				}
+			case 'PlayerModeToggle':
+				return {
+					ctor: '_Tuple2',
+					_0: _elm_lang$core$Native_Utils.update(
+						model,
+						{
+							playerMode: _elm_lang$core$Native_Utils.eq(model.playerMode, _user$project$Api$SinglePlayer) ? _user$project$Api$MultiPlayer : _user$project$Api$SinglePlayer
+						}),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+			case 'FetchSucceed':
+				return {
+					ctor: '_Tuple2',
+					_0: _elm_lang$core$Native_Utils.update(
+						model,
+						{gameCode: _p7._0}),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+			case 'FetchFail':
+				return {
+					ctor: '_Tuple2',
+					_0: _elm_lang$core$Native_Utils.update(
+						model,
+						{
+							board: A2(_user$project$Api$ErrorBoard, _user$project$Api$defaultCells, 'Something went wrong.!')
+						}),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+			case 'CreateGameEvent':
+				return A3(_user$project$Api$getRandomGameCode, model, _user$project$Main$FetchFail, _user$project$Main$FetchSucceed);
+			case 'ConnectOrDisconnect':
+				return {
+					ctor: '_Tuple2',
+					_0: _elm_lang$core$Native_Utils.update(
+						model,
+						{
+							isConnected: _elm_lang$core$Basics$not(model.isConnected)
+						}),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+			case 'InputMessage':
+				return {
+					ctor: '_Tuple2',
+					_0: _elm_lang$core$Native_Utils.update(
+						model,
+						{inputMessage: _p7._0}),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+			case 'InputPlayerName':
+				return {
+					ctor: '_Tuple2',
+					_0: _elm_lang$core$Native_Utils.update(
+						model,
+						{
+							playerName: {
+								ctor: '_Tuple2',
+								_0: _p7._0,
+								_1: _elm_lang$core$Basics$snd(model.playerName)
+							}
+						}),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+			case 'InputGameCode':
+				return {
+					ctor: '_Tuple2',
+					_0: _elm_lang$core$Native_Utils.update(
+						model,
+						{gameCode: _p7._0}),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+			case 'SendMessage':
+				return {
+					ctor: '_Tuple2',
+					_0: _elm_lang$core$Native_Utils.update(
+						model,
+						{inputMessage: ''}),
+					_1: model.isConnected ? A3(_user$project$Api$sendMessage, model.playerName, model.gameCode, model.inputMessage) : _elm_lang$core$Platform_Cmd$none
+				};
+			case 'ReceiveMessage':
+				return A2(_user$project$Main$socketMessageHandler, model, _p7._0);
+			case 'HideComponent':
+				return {
+					ctor: '_Tuple2',
+					_0: _elm_lang$core$Native_Utils.update(
+						model,
+						{
+							playerName: {
+								ctor: '_Tuple2',
+								_0: _elm_lang$core$Basics$fst(model.playerName),
+								_1: _elm_lang$core$Basics$not(
+									_elm_lang$core$Basics$snd(model.playerName))
+							}
+						}),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+			case 'JoinApply':
+				return {
+					ctor: '_Tuple2',
+					_0: A3(
+						_user$project$Api$joinGame,
+						model,
+						model.gameCode,
+						A2(_user$project$Api$EmptyBoard, _user$project$Api$defaultCells, 'New Game')),
+					_1: _elm_lang$core$Platform_Cmd$none
+				};
+			default:
+				return A2(_user$project$UI$menuAnimation, model, _p7._0);
+		}
+	});
+var _user$project$Main$init = {
+	ctor: '_Tuple2',
+	_0: _user$project$Main$Model(
+		_user$project$Api$Default('New Game'))(_user$project$Api$PlayerO)(
+		A2(_user$project$Api$EmptyBoard, _user$project$Api$defaultCells, 'New Game'))(
+		{ctor: '_Tuple2', _0: 0, _1: 0})(
+		A2(_elm_lang$window$Window$Size, 0, 0))(_user$project$Api$SinglePlayer)(false)(false)(true)('')('')(
+		{ctor: '_Tuple2', _0: '', _1: false})(
+		_elm_lang$core$Native_List.fromArray(
+			[]))(
+		_elm_lang$core$Native_List.fromArray(
+			[]))(false)(
+		_mdgriffith$elm_style_animation$Style$init(_user$project$AppStyle$menuStyles.closed))(false)(_elm_lang$core$Array$empty)(false)(_user$project$Api$NoPlayer),
+	_1: _user$project$Main$sizeTask
+};
+var _user$project$Main$subscriptions = function (model) {
+	return _elm_lang$core$Platform_Sub$batch(
+		model.isConnected ? A4(_user$project$Api$socketSubscriptions, model, _user$project$Main$ReceiveMessage, _user$project$Main$Resize, _user$project$Main$Animate) : A3(_user$project$Api$defaultSubscriptions, model, _user$project$Main$Resize, _user$project$Main$Animate));
+};
+var _user$project$Main$JoinApply = {ctor: 'JoinApply'};
+var _user$project$Main$CreateGameEvent = {ctor: 'CreateGameEvent'};
+var _user$project$Main$PlayerModeToggle = {ctor: 'PlayerModeToggle'};
+var _user$project$Main$gameSettingsBox = function (_p14) {
+	var _p15 = _p14;
+	var _p20 = _p15.players;
+	var _p19 = _p15.playerName;
+	var _p18 = _p15.playerMode;
+	var _p17 = _p15.isConnected;
+	var multiPlayerToolBoxVisible = _elm_lang$core$Native_Utils.eq(_p18, _user$project$Api$MultiPlayer) ? 'block' : 'none';
 	return A2(
 		_elm_lang$html$Html$div,
 		_elm_lang$core$Native_List.fromArray(
-			[_user$project$MyStyle$toolBoxStyle]),
+			[_user$project$AppStyle$gameSettingsBoxStyle]),
+		_elm_lang$core$Native_List.fromArray(
+			[
+				A2(
+				_elm_lang$html$Html$div,
+				_elm_lang$core$Native_List.fromArray(
+					[
+						_elm_lang$html$Html_Attributes$style(
+						_elm_lang$core$Native_List.fromArray(
+							[
+								{ctor: '_Tuple2', _0: 'padding', _1: '5px'}
+							]))
+					]),
+				_elm_lang$core$Native_List.fromArray(
+					[
+						A2(
+						_elm_lang$html$Html$span,
+						_elm_lang$core$Native_List.fromArray(
+							[]),
+						_elm_lang$core$Native_List.fromArray(
+							[
+								_elm_lang$html$Html$text(' 2-Player ')
+							])),
+						A2(
+						_elm_lang$html$Html$button,
+						_elm_lang$core$Native_List.fromArray(
+							[
+								_user$project$AppStyle$buttonStyle1,
+								_elm_lang$html$Html_Events$onClick(_user$project$Main$PlayerModeToggle)
+							]),
+						_elm_lang$core$Native_List.fromArray(
+							[
+								_elm_lang$html$Html$text(
+								_elm_lang$core$Native_Utils.eq(_p18, _user$project$Api$SinglePlayer) ? 'Standalone' : 'Remote')
+							]))
+					])),
+				A2(
+				_elm_lang$html$Html$div,
+				_elm_lang$core$Native_List.fromArray(
+					[
+						_elm_lang$html$Html_Attributes$style(
+						_elm_lang$core$Native_List.fromArray(
+							[
+								{ctor: '_Tuple2', _0: 'display', _1: multiPlayerToolBoxVisible}
+							]))
+					]),
+				_elm_lang$core$Native_List.fromArray(
+					[
+						A2(
+						_elm_lang$html$Html$div,
+						_elm_lang$core$Native_List.fromArray(
+							[]),
+						_elm_lang$core$Native_List.fromArray(
+							[
+								A2(
+								_elm_lang$html$Html$br,
+								_elm_lang$core$Native_List.fromArray(
+									[]),
+								_elm_lang$core$Native_List.fromArray(
+									[])),
+								A2(
+								_elm_lang$html$Html$input,
+								_elm_lang$core$Native_List.fromArray(
+									[
+										_elm_lang$html$Html_Attributes$placeholder('Player Name'),
+										_user$project$AppStyle$textStyle1,
+										_elm_lang$html$Html_Attributes$style(
+										_elm_lang$core$Native_List.fromArray(
+											[
+												{
+												ctor: '_Tuple2',
+												_0: 'background',
+												_1: _elm_lang$core$Basics$snd(_p19) ? '#dddddd' : '#ffffff'
+											}
+											])),
+										_elm_lang$html$Html_Events$onInput(_user$project$Main$InputPlayerName)
+									]),
+								_elm_lang$core$Native_List.fromArray(
+									[
+										_elm_lang$html$Html$text(
+										_elm_lang$core$Basics$fst(_p19))
+									])),
+								A2(
+								_elm_lang$html$Html$button,
+								_elm_lang$core$Native_List.fromArray(
+									[
+										_user$project$AppStyle$buttonStyle1,
+										_elm_lang$html$Html_Events$onClick(
+										_user$project$Main$HideComponent(_p19))
+									]),
+								_elm_lang$core$Native_List.fromArray(
+									[
+										_elm_lang$html$Html$text(
+										_elm_lang$core$Basics$snd(_p19) ? 'Edit ' : 'Save')
+									]))
+							])),
+						A2(
+						_elm_lang$html$Html$div,
+						_elm_lang$core$Native_List.fromArray(
+							[]),
+						_elm_lang$core$Native_List.fromArray(
+							[
+								A2(
+								_elm_lang$html$Html$br,
+								_elm_lang$core$Native_List.fromArray(
+									[]),
+								_elm_lang$core$Native_List.fromArray(
+									[])),
+								A2(
+								_elm_lang$html$Html$div,
+								_elm_lang$core$Native_List.fromArray(
+									[]),
+								_elm_lang$core$Native_List.fromArray(
+									[
+										A2(
+										_elm_lang$html$Html$button,
+										_elm_lang$core$Native_List.fromArray(
+											[
+												_user$project$AppStyle$textStyle1,
+												_user$project$AppStyle$buttonStyle1,
+												_elm_lang$html$Html_Events$onClick(_user$project$Main$CreateGameEvent)
+											]),
+										_elm_lang$core$Native_List.fromArray(
+											[
+												_elm_lang$html$Html$text('Create')
+											]))
+									])),
+								A2(
+								_elm_lang$html$Html$div,
+								_elm_lang$core$Native_List.fromArray(
+									[]),
+								_elm_lang$core$Native_List.fromArray(
+									[
+										A2(
+										_elm_lang$html$Html$div,
+										_elm_lang$core$Native_List.fromArray(
+											[]),
+										_elm_lang$core$Native_List.fromArray(
+											[
+												A2(
+												_elm_lang$html$Html$input,
+												_elm_lang$core$Native_List.fromArray(
+													[
+														_elm_lang$html$Html_Attributes$placeholder('Code'),
+														_user$project$AppStyle$textStyle1,
+														_elm_lang$html$Html_Events$onInput(_user$project$Main$InputGameCode),
+														_elm_lang$html$Html_Attributes$value(_p15.gameCode)
+													]),
+												_elm_lang$core$Native_List.fromArray(
+													[])),
+												A2(
+												_elm_lang$html$Html$button,
+												_elm_lang$core$Native_List.fromArray(
+													[
+														_user$project$AppStyle$buttonStyle1,
+														_elm_lang$html$Html_Events$onClick(_user$project$Main$JoinApply)
+													]),
+												_elm_lang$core$Native_List.fromArray(
+													[
+														_elm_lang$html$Html$text('Join')
+													]))
+											]))
+									]))
+							])),
+						A2(
+						_elm_lang$html$Html$div,
+						_elm_lang$core$Native_List.fromArray(
+							[
+								_elm_lang$html$Html_Attributes$style(
+								_elm_lang$core$Native_List.fromArray(
+									[
+										{
+										ctor: '_Tuple2',
+										_0: 'display',
+										_1: (_elm_lang$core$Native_Utils.cmp(
+											_elm_lang$core$Array$length(_p20),
+											0) > 0) ? 'block' : 'none'
+									}
+									]))
+							]),
+						_elm_lang$core$Native_List.fromArray(
+							[
+								A2(
+								_elm_lang$html$Html$span,
+								_elm_lang$core$Native_List.fromArray(
+									[]),
+								_elm_lang$core$Native_List.fromArray(
+									[
+										_elm_lang$html$Html$text('Players : ')
+									])),
+								A2(
+								_elm_lang$html$Html$span,
+								_elm_lang$core$Native_List.fromArray(
+									[]),
+								_elm_lang$core$Native_List.fromArray(
+									[
+										_elm_lang$html$Html$text(
+										A2(_user$project$Api$playerJoiningStatus, _p20, _p19))
+									])),
+								A2(
+								_elm_lang$html$Html$br,
+								_elm_lang$core$Native_List.fromArray(
+									[]),
+								_elm_lang$core$Native_List.fromArray(
+									[])),
+								A2(
+								_elm_lang$html$Html$span,
+								_elm_lang$core$Native_List.fromArray(
+									[]),
+								_elm_lang$core$Native_List.fromArray(
+									[
+										_elm_lang$html$Html$text(
+										A2(
+											_elm_lang$core$Basics_ops['++'],
+											'Symbol : ',
+											function () {
+												var _p16 = _p15.currentPlayer;
+												switch (_p16.ctor) {
+													case 'NoPlayer':
+														return '_';
+													case 'PlayerX':
+														return 'X';
+													default:
+														return 'O';
+												}
+											}()))
+									]))
+							])),
+						A2(
+						_elm_lang$html$Html$div,
+						_elm_lang$core$Native_List.fromArray(
+							[]),
+						_elm_lang$core$Native_List.fromArray(
+							[
+								A2(
+								_elm_lang$html$Html$label,
+								_elm_lang$core$Native_List.fromArray(
+									[]),
+								_elm_lang$core$Native_List.fromArray(
+									[
+										A2(
+										_elm_lang$html$Html$br,
+										_elm_lang$core$Native_List.fromArray(
+											[]),
+										_elm_lang$core$Native_List.fromArray(
+											[])),
+										A2(
+										_elm_lang$html$Html$button,
+										_elm_lang$core$Native_List.fromArray(
+											[
+												_user$project$AppStyle$statusButton(_p17),
+												_elm_lang$html$Html_Events$onClick(_user$project$Main$ConnectOrDisconnect)
+											]),
+										_elm_lang$core$Native_List.fromArray(
+											[
+												_elm_lang$html$Html$text(
+												_p17 ? 'Online' : 'Offline')
+											]))
+									]))
+							]))
+					]))
+			]));
+};
+var _user$project$Main$Reset = {ctor: 'Reset'};
+var _user$project$Main$toolBox = function (_p21) {
+	var _p22 = _p21;
+	var gameStatus = _user$project$Main$statusToMessage(
+		A2(_user$project$Api$buildStatusFromResult, _p22.board, _p22.lastMove));
+	return A2(
+		_elm_lang$html$Html$div,
+		_elm_lang$core$Native_List.fromArray(
+			[_user$project$AppStyle$toolBoxStyle]),
 		_elm_lang$core$Native_List.fromArray(
 			[
 				A2(
 				_elm_lang$html$Html$button,
 				_elm_lang$core$Native_List.fromArray(
 					[
-						_user$project$MyStyle$buttonStyle,
+						_user$project$AppStyle$buttonStyle,
 						_elm_lang$html$Html_Events$onClick(_user$project$Main$Reset)
 					]),
 				_elm_lang$core$Native_List.fromArray(
 					[
-						_elm_lang$html$Html$text('New')
+						_elm_lang$html$Html$text(
+						A3(_user$project$Api$playMode, _p22.playerMode, _p22.connectionStatus, _p22.startRequest))
 					])),
 				A2(
 				_elm_lang$html$Html$div,
@@ -16211,7 +18794,7 @@ var _user$project$Main$toolBox = function (_p1) {
 						A2(
 						_elm_lang$html$Html$span,
 						_elm_lang$core$Native_List.fromArray(
-							[_user$project$MyStyle$notificationStyle]),
+							[_user$project$AppStyle$notificationStyle]),
 						_elm_lang$core$Native_List.fromArray(
 							[
 								_elm_lang$html$Html$text(
@@ -16220,191 +18803,36 @@ var _user$project$Main$toolBox = function (_p1) {
 					]))
 			]));
 };
-var _user$project$Main$Resize = function (a) {
-	return {ctor: 'Resize', _0: a};
-};
-var _user$project$Main$sizeTask = A3(_elm_lang$core$Task$perform, _user$project$Main$Resize, _user$project$Main$Resize, _elm_lang$window$Window$size);
-var _user$project$Main$update = F2(
-	function (msg, model) {
-		var _p3 = msg;
-		switch (_p3.ctor) {
-			case 'Played':
-				var _p5 = _p3._0;
-				var _p4 = model.board;
-				switch (_p4.ctor) {
-					case 'PlayBoard':
-						return {
-							ctor: '_Tuple2',
-							_0: A3(_user$project$Api$updateBoardModel, _p4._0, model, _p5),
-							_1: _elm_lang$core$Platform_Cmd$none
-						};
-					case 'EmptyBoard':
-						return {
-							ctor: '_Tuple2',
-							_0: A3(_user$project$Api$updateBoardModel, _p4._0, model, _p5),
-							_1: _elm_lang$core$Platform_Cmd$none
-						};
-					case 'ErrorBoard':
-						return {
-							ctor: '_Tuple2',
-							_0: A3(_user$project$Api$updateBoardModel, _p4._0, model, _p5),
-							_1: _elm_lang$core$Platform_Cmd$none
-						};
-					case 'TieBoard':
-						return {
-							ctor: '_Tuple2',
-							_0: _elm_lang$core$Native_Utils.update(
-								model,
-								{
-									status: _user$project$Api$NotValidMove(
-										A2(_elm_lang$core$Basics_ops['++'], 'Game Over as match result :', _p4._1))
-								}),
-							_1: _elm_lang$core$Platform_Cmd$none
-						};
-					default:
-						return {
-							ctor: '_Tuple2',
-							_0: _elm_lang$core$Native_Utils.update(
-								model,
-								{
-									status: _user$project$Api$NotValidMove(
-										A2(_elm_lang$core$Basics_ops['++'], 'Game Over as match result :', _p4._1))
-								}),
-							_1: _elm_lang$core$Platform_Cmd$none
-						};
-				}
-			case 'Resize':
-				return {
-					ctor: '_Tuple2',
-					_0: _elm_lang$core$Native_Utils.update(
-						model,
-						{screenSize: _p3._0}),
-					_1: _elm_lang$core$Platform_Cmd$none
-				};
-			case 'Reset':
-				return {
-					ctor: '_Tuple2',
-					_0: _elm_lang$core$Native_Utils.update(
-						model,
-						{
-							board: _user$project$Api$EmptyBoard(_user$project$Api$defaultCells)
-						}),
-					_1: _user$project$Main$sizeTask
-				};
-			default:
-				var _p9 = _p3._0;
-				var _p6 = model.board;
-				switch (_p6.ctor) {
-					case 'PlayBoard':
-						return {
-							ctor: '_Tuple2',
-							_0: _elm_lang$core$Native_Utils.update(
-								model,
-								{
-									board: _user$project$Api$PlayBoard(
-										A3(_user$project$Main$doAnimation, _p9, _p6._0, model.lastMove))
-								}),
-							_1: _elm_lang$core$Platform_Cmd$none
-						};
-					case 'EmptyBoard':
-						return {ctor: '_Tuple2', _0: model, _1: _elm_lang$core$Platform_Cmd$none};
-					case 'ErrorBoard':
-						return {
-							ctor: '_Tuple2',
-							_0: _elm_lang$core$Native_Utils.update(
-								model,
-								{
-									board: A2(
-										_user$project$Api$ErrorBoard,
-										A3(_user$project$Main$doAnimation, _p9, _p6._0, model.lastMove),
-										_p6._1)
-								}),
-							_1: _elm_lang$core$Platform_Cmd$none
-						};
-					case 'TieBoard':
-						var _p7 = _p6._1;
-						return {
-							ctor: '_Tuple2',
-							_0: _elm_lang$core$Native_Utils.update(
-								model,
-								{
-									board: A2(
-										_user$project$Api$TieBoard,
-										A3(_user$project$Main$doAnimation, _p9, _p6._0, model.lastMove),
-										_p7),
-									status: _user$project$Api$NotValidMove(
-										A2(_elm_lang$core$Basics_ops['++'], 'Game Over as match result :', _p7))
-								}),
-							_1: _elm_lang$core$Platform_Cmd$none
-						};
-					default:
-						var _p8 = _p6._1;
-						return {
-							ctor: '_Tuple2',
-							_0: _elm_lang$core$Native_Utils.update(
-								model,
-								{
-									board: A3(
-										_user$project$Api$WinBoard,
-										A3(_user$project$Main$doAnimation, _p9, _p6._0, model.lastMove),
-										_p8,
-										_p6._2),
-									status: _user$project$Api$NotValidMove(
-										A2(_elm_lang$core$Basics_ops['++'], 'Game Over as match result :', _p8))
-								}),
-							_1: _elm_lang$core$Platform_Cmd$none
-						};
-				}
-		}
-	});
-var _user$project$Main$init = {
-	ctor: '_Tuple2',
-	_0: A5(
-		_user$project$Main$Model,
-		_user$project$Api$Default,
-		_user$project$Api$PlayerO,
-		_user$project$Api$EmptyBoard(_user$project$Api$defaultCells),
-		{ctor: '_Tuple2', _0: 0, _1: 0},
-		A2(_elm_lang$window$Window$Size, 0, 0)),
-	_1: _user$project$Main$sizeTask
-};
-var _user$project$Main$subscriptions = function (_p10) {
-	return _elm_lang$core$Platform_Sub$batch(
-		_elm_lang$core$Native_List.fromArray(
-			[
-				_elm_lang$window$Window$resizes(_user$project$Main$Resize),
-				_elm_lang$animation_frame$AnimationFrame$times(_user$project$Main$Animate)
-			]));
-};
 var _user$project$Main$Played = function (a) {
 	return {ctor: 'Played', _0: a};
 };
 var _user$project$Main$mapCellToTile = F3(
-	function (board, screenSize, cell) {
+	function (board, screenSize, _p23) {
+		var _p24 = _p23;
+		var _p28 = _p24.position;
+		var _p27 = _p24.animation;
+		var boardBgColor = function () {
+			var _p25 = A2(
+				_elm_lang$core$List$member,
+				_p28,
+				_user$project$Api$getWinnerBoardSequence(board));
+			if (_p25 === true) {
+				return _user$project$AppStyle$winTileBg;
+			} else {
+				return _user$project$AppStyle$defaultTileBg;
+			}
+		}();
 		var size = _user$project$UI$tileSize(screenSize);
 		var times = (size / 100) | 0;
-		var xVal = _elm_lang$core$Basics$fst(cell.position) * size;
-		var yVal = _elm_lang$core$Basics$snd(cell.position) * size;
+		var xVal = _elm_lang$core$Basics$fst(_p28) * size;
+		var yVal = _elm_lang$core$Basics$snd(_p28) * size;
 		var circleSize = (size / 2) | 0;
 		var crossSize = (size / 4) | 0;
 		var symbolWidth = (size / 6) | 0;
 		var w = screenSize.width;
 		var h = screenSize.height;
-		var _p11 = cell;
-		var position = _p11.position;
-		var boardBgColor = function () {
-			var _p12 = A2(
-				_elm_lang$core$List$member,
-				position,
-				_user$project$Api$getWinnerBoardSequence(board));
-			if (_p12 === true) {
-				return _user$project$MyStyle$winTileBg;
-			} else {
-				return _user$project$MyStyle$defaultTileBg;
-			}
-		}();
-		var _p13 = cell.player;
-		switch (_p13.ctor) {
+		var _p26 = _p24.player;
+		switch (_p26.ctor) {
 			case 'PlayerO':
 				return A2(
 					_elm_lang$svg$Svg$g,
@@ -16419,12 +18847,12 @@ var _user$project$Main$mapCellToTile = F3(
 									_elm_lang$html$Html_Attributes$style(
 									A2(
 										_elm_lang$core$Basics_ops['++'],
-										_user$project$MyStyle$cellStyle,
-										_mdgriffith$elm_style_animation$Style$render(cell.animation))),
+										_user$project$AppStyle$cellStyle,
+										_mdgriffith$elm_style_animation$Style$render(_p27))),
 									_elm_lang$html$Html_Events$onClick(
-									_user$project$Main$Played(position)),
+									_user$project$Main$Played(_p28)),
 									_elm_lang$svg$Svg_Attributes$fill(boardBgColor),
-									_elm_lang$svg$Svg_Attributes$stroke(_user$project$MyStyle$symbolColor),
+									_elm_lang$svg$Svg_Attributes$stroke(_user$project$AppStyle$symbolColor),
 									_elm_lang$svg$Svg_Attributes$x(
 									_elm_lang$core$Basics$toString(xVal)),
 									_elm_lang$svg$Svg_Attributes$y(
@@ -16441,10 +18869,10 @@ var _user$project$Main$mapCellToTile = F3(
 							_elm_lang$core$Native_List.fromArray(
 								[
 									_elm_lang$html$Html_Attributes$style(
-									_mdgriffith$elm_style_animation$Style$render(cell.animation)),
+									_mdgriffith$elm_style_animation$Style$render(_p27)),
 									_elm_lang$html$Html_Events$onClick(
-									_user$project$Main$Played(position)),
-									_elm_lang$svg$Svg_Attributes$fill(_user$project$MyStyle$symbolColor),
+									_user$project$Main$Played(_p28)),
+									_elm_lang$svg$Svg_Attributes$fill(_user$project$AppStyle$symbolColor),
 									_elm_lang$svg$Svg_Attributes$cx(
 									_elm_lang$core$Basics$toString((xVal + circleSize) + times)),
 									_elm_lang$svg$Svg_Attributes$cy(
@@ -16459,9 +18887,9 @@ var _user$project$Main$mapCellToTile = F3(
 							_elm_lang$core$Native_List.fromArray(
 								[
 									_elm_lang$html$Html_Attributes$style(
-									_mdgriffith$elm_style_animation$Style$render(cell.animation)),
+									_mdgriffith$elm_style_animation$Style$render(_p27)),
 									_elm_lang$html$Html_Events$onClick(
-									_user$project$Main$Played(position)),
+									_user$project$Main$Played(_p28)),
 									_elm_lang$svg$Svg_Attributes$fill(boardBgColor),
 									_elm_lang$svg$Svg_Attributes$cx(
 									_elm_lang$core$Basics$toString((xVal + circleSize) + times)),
@@ -16487,18 +18915,18 @@ var _user$project$Main$mapCellToTile = F3(
 									_elm_lang$html$Html_Attributes$style(
 									A2(
 										_elm_lang$core$Basics_ops['++'],
-										_user$project$MyStyle$cellStyle,
-										_mdgriffith$elm_style_animation$Style$render(cell.animation))),
+										_user$project$AppStyle$cellStyle,
+										_mdgriffith$elm_style_animation$Style$render(_p27))),
 									_elm_lang$html$Html_Events$onClick(
-									_user$project$Main$Played(position)),
+									_user$project$Main$Played(_p28)),
 									_elm_lang$svg$Svg_Attributes$fill(boardBgColor),
-									_elm_lang$svg$Svg_Attributes$stroke(_user$project$MyStyle$symbolColor),
+									_elm_lang$svg$Svg_Attributes$stroke(_user$project$AppStyle$symbolColor),
 									_elm_lang$svg$Svg_Attributes$x(
 									_elm_lang$core$Basics$toString(
-										_elm_lang$core$Basics$fst(cell.position) * size)),
+										_elm_lang$core$Basics$fst(_p28) * size)),
 									_elm_lang$svg$Svg_Attributes$y(
 									_elm_lang$core$Basics$toString(
-										_elm_lang$core$Basics$snd(cell.position) * size)),
+										_elm_lang$core$Basics$snd(_p28) * size)),
 									_elm_lang$svg$Svg_Attributes$width(
 									_elm_lang$core$Basics$toString(size)),
 									_elm_lang$svg$Svg_Attributes$height(
@@ -16511,9 +18939,9 @@ var _user$project$Main$mapCellToTile = F3(
 							_elm_lang$core$Native_List.fromArray(
 								[
 									_elm_lang$html$Html_Attributes$style(
-									_mdgriffith$elm_style_animation$Style$render(cell.animation)),
+									_mdgriffith$elm_style_animation$Style$render(_p27)),
 									_elm_lang$html$Html_Events$onClick(
-									_user$project$Main$Played(position)),
+									_user$project$Main$Played(_p28)),
 									_elm_lang$svg$Svg_Attributes$x1(
 									_elm_lang$core$Basics$toString(xVal + crossSize)),
 									_elm_lang$svg$Svg_Attributes$y1(
@@ -16522,7 +18950,7 @@ var _user$project$Main$mapCellToTile = F3(
 									_elm_lang$core$Basics$toString(xVal + (size - crossSize))),
 									_elm_lang$svg$Svg_Attributes$y2(
 									_elm_lang$core$Basics$toString(yVal + (size - crossSize))),
-									_elm_lang$svg$Svg_Attributes$stroke(_user$project$MyStyle$symbolColor),
+									_elm_lang$svg$Svg_Attributes$stroke(_user$project$AppStyle$symbolColor),
 									_elm_lang$svg$Svg_Attributes$strokeWidth(
 									_elm_lang$core$Basics$toString(symbolWidth))
 								]),
@@ -16533,9 +18961,9 @@ var _user$project$Main$mapCellToTile = F3(
 							_elm_lang$core$Native_List.fromArray(
 								[
 									_elm_lang$html$Html_Attributes$style(
-									_mdgriffith$elm_style_animation$Style$render(cell.animation)),
+									_mdgriffith$elm_style_animation$Style$render(_p27)),
 									_elm_lang$html$Html_Events$onClick(
-									_user$project$Main$Played(position)),
+									_user$project$Main$Played(_p28)),
 									_elm_lang$svg$Svg_Attributes$x1(
 									_elm_lang$core$Basics$toString(xVal + crossSize)),
 									_elm_lang$svg$Svg_Attributes$y1(
@@ -16544,7 +18972,7 @@ var _user$project$Main$mapCellToTile = F3(
 									_elm_lang$core$Basics$toString(xVal + (size - crossSize))),
 									_elm_lang$svg$Svg_Attributes$y2(
 									_elm_lang$core$Basics$toString(yVal + crossSize)),
-									_elm_lang$svg$Svg_Attributes$stroke(_user$project$MyStyle$symbolColor),
+									_elm_lang$svg$Svg_Attributes$stroke(_user$project$AppStyle$symbolColor),
 									_elm_lang$svg$Svg_Attributes$strokeWidth(
 									_elm_lang$core$Basics$toString(symbolWidth))
 								]),
@@ -16559,18 +18987,18 @@ var _user$project$Main$mapCellToTile = F3(
 							_elm_lang$html$Html_Attributes$style(
 							A2(
 								_elm_lang$core$Basics_ops['++'],
-								_user$project$MyStyle$cellStyle,
-								_mdgriffith$elm_style_animation$Style$render(cell.animation))),
+								_user$project$AppStyle$cellStyle,
+								_mdgriffith$elm_style_animation$Style$render(_p27))),
 							_elm_lang$html$Html_Events$onClick(
-							_user$project$Main$Played(position)),
-							_elm_lang$svg$Svg_Attributes$fill(_user$project$MyStyle$symbolColor),
+							_user$project$Main$Played(_p28)),
+							_elm_lang$svg$Svg_Attributes$fill(_user$project$AppStyle$symbolColor),
 							_elm_lang$svg$Svg_Attributes$stroke(boardBgColor),
 							_elm_lang$svg$Svg_Attributes$x(
 							_elm_lang$core$Basics$toString(
-								_elm_lang$core$Basics$fst(cell.position) * size)),
+								_elm_lang$core$Basics$fst(_p28) * size)),
 							_elm_lang$svg$Svg_Attributes$y(
 							_elm_lang$core$Basics$toString(
-								_elm_lang$core$Basics$snd(cell.position) * size)),
+								_elm_lang$core$Basics$snd(_p28) * size)),
 							_elm_lang$svg$Svg_Attributes$width(
 							_elm_lang$core$Basics$toString(size)),
 							_elm_lang$svg$Svg_Attributes$height(
@@ -16582,38 +19010,38 @@ var _user$project$Main$mapCellToTile = F3(
 	});
 var _user$project$Main$drawBoard = F2(
 	function (board, screenSize) {
-		var _p14 = board;
-		switch (_p14.ctor) {
+		var _p29 = board;
+		switch (_p29.ctor) {
 			case 'EmptyBoard':
 				return A2(
 					_elm_lang$core$List$map,
 					A2(_user$project$Main$mapCellToTile, board, screenSize),
-					_p14._0);
+					_p29._0);
 			case 'PlayBoard':
 				return A2(
 					_elm_lang$core$List$map,
 					A2(_user$project$Main$mapCellToTile, board, screenSize),
-					_p14._0);
+					_p29._0);
 			case 'WinBoard':
 				return A2(
 					_elm_lang$core$List$map,
 					A2(_user$project$Main$mapCellToTile, board, screenSize),
-					_p14._0);
+					_p29._0);
 			case 'TieBoard':
 				return A2(
 					_elm_lang$core$List$map,
 					A2(_user$project$Main$mapCellToTile, board, screenSize),
-					_p14._0);
+					_p29._0);
 			default:
 				return A2(
 					_elm_lang$core$List$map,
 					A2(_user$project$Main$mapCellToTile, board, screenSize),
-					_p14._0);
+					_p29._0);
 		}
 	});
-var _user$project$Main$boardBox = function (_p15) {
-	var _p16 = _p15;
-	var _p17 = _p16.screenSize;
+var _user$project$Main$boardBox = function (_p30) {
+	var _p31 = _p30;
+	var _p32 = _p31.screenSize;
 	return A2(
 		_elm_lang$html$Html$div,
 		_elm_lang$core$Native_List.fromArray(
@@ -16621,7 +19049,7 @@ var _user$project$Main$boardBox = function (_p15) {
 				_elm_lang$html$Html_Attributes$style(
 				_elm_lang$core$Native_List.fromArray(
 					[
-						_user$project$UI$boxAlign(_p17)
+						_user$project$UI$boxAlign(_p32)
 					]))
 			]),
 		_elm_lang$core$Native_List.fromArray(
@@ -16630,19 +19058,19 @@ var _user$project$Main$boardBox = function (_p15) {
 				_elm_lang$svg$Svg$svg,
 				_elm_lang$core$Native_List.fromArray(
 					[
-						_user$project$MyStyle$boardBoxStyle,
+						_user$project$AppStyle$boardBoxStyle,
 						_elm_lang$svg$Svg_Attributes$version('1.1'),
 						_elm_lang$svg$Svg_Attributes$x('0'),
 						_elm_lang$svg$Svg_Attributes$y('0'),
 						_elm_lang$svg$Svg_Attributes$viewBox('0 0'),
 						_elm_lang$svg$Svg_Attributes$width(
 						_user$project$UI$px(
-							_user$project$UI$windowSize(_p17))),
+							_user$project$UI$windowSize(_p32))),
 						_elm_lang$svg$Svg_Attributes$height(
 						_user$project$UI$px(
-							_user$project$UI$windowSize(_p17)))
+							_user$project$UI$windowSize(_p32)))
 					]),
-				A2(_user$project$Main$drawBoard, _p16.board, _p17))
+				A2(_user$project$Main$drawBoard, _p31.board, _p32))
 			]));
 };
 var _user$project$Main$view = function (model) {
@@ -16652,12 +19080,69 @@ var _user$project$Main$view = function (model) {
 			[
 				_elm_lang$html$Html_Attributes$style(
 				_elm_lang$core$Native_List.fromArray(
-					[_user$project$MyStyle$margin]))
+					[]))
 			]),
 		_elm_lang$core$Native_List.fromArray(
 			[
 				_user$project$Main$boardBox(model),
-				_user$project$Main$toolBox(model)
+				A2(
+				_elm_lang$html$Html$div,
+				_elm_lang$core$Native_List.fromArray(
+					[
+						_user$project$AppStyle$menuBoxStyle(
+						_mdgriffith$elm_style_animation$Style$render(model.style))
+					]),
+				_elm_lang$core$Native_List.fromArray(
+					[
+						A2(
+						_elm_lang$html$Html$button,
+						_elm_lang$core$Native_List.fromArray(
+							[
+								_user$project$AppStyle$buttonStyle2,
+								_elm_lang$html$Html_Events$onClick(
+								_user$project$Main$ShowOrHide(model.menu))
+							]),
+						_elm_lang$core$Native_List.fromArray(
+							[
+								_elm_lang$html$Html$text('Close')
+							])),
+						A2(
+						_elm_lang$html$Html$h1,
+						_elm_lang$core$Native_List.fromArray(
+							[]),
+						_elm_lang$core$Native_List.fromArray(
+							[
+								_elm_lang$html$Html$text('Tic-Tac-Toe')
+							])),
+						_user$project$Main$gameSettingsBox(model)
+					])),
+				A2(
+				_elm_lang$html$Html$div,
+				_elm_lang$core$Native_List.fromArray(
+					[]),
+				_elm_lang$core$Native_List.fromArray(
+					[
+						A2(
+						_elm_lang$html$Html$div,
+						_elm_lang$core$Native_List.fromArray(
+							[]),
+						_elm_lang$core$Native_List.fromArray(
+							[
+								A2(
+								_elm_lang$html$Html$button,
+								_elm_lang$core$Native_List.fromArray(
+									[
+										_user$project$AppStyle$buttonStyle3,
+										_elm_lang$html$Html_Events$onClick(
+										_user$project$Main$ShowOrHide(model.menu))
+									]),
+								_elm_lang$core$Native_List.fromArray(
+									[
+										_elm_lang$html$Html$text('Menu')
+									]))
+							])),
+						_user$project$Main$toolBox(model)
+					]))
 			]));
 };
 var _user$project$Main$main = {

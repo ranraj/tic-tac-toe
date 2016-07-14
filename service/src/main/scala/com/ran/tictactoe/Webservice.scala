@@ -15,7 +15,7 @@ import akka.stream.Materializer
 import akka.stream.scaladsl.Flow
 import com.ran.tictactoe.MessageType.GameMessage
 
-import upickle._
+import upickle.default._
 
 /**
  * Created by ranjithrajd on 4/7/16.
@@ -25,10 +25,10 @@ class Webservice(implicit fm: Materializer, system: ActorSystem) extends Directi
   val game = GameMessenger.create(system)
   val logger = Logging(system, getClass)
 
-  import system.dispatcher
+ /* import system.dispatcher
   system.scheduler.schedule(15.second, 15.second) {
     game.pushMessage(GameMessage(sender = "clock", gameId = "default", s"Bling! The time is ${new Date().toString}."))
-  }
+  }*/
 
   def route =
     logRequestResult("tictactoe-service") {
@@ -57,7 +57,7 @@ class Webservice(implicit fm: Materializer, system: ActorSystem) extends Directi
   def websocketChatFlow(sender: String, id: String): Flow[Message, Message, Any] =
     Flow[Message]
       .collect {
-        case TextMessage.Strict(msg) ⇒ msg // unpack incoming WS text messages...
+        case TextMessage.Strict(msg) ⇒ msg
       }
       .via(game.gameFlow(sender, id))
       .map {

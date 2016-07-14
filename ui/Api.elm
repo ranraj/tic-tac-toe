@@ -7,7 +7,7 @@ import Style.Spring.Presets
 import String
 import Task
 import Http
-import Json.Decode exposing (Decoder,tuple2,decodeString, int, string, object2, (:=),array,at)
+import Json.Decode exposing (Decoder,tuple2,decodeString, int, string, object1,object2,object4, (:=),array,at)
 import Array
 import WebSocket
 import AppConfig exposing (..)
@@ -151,20 +151,43 @@ defaultSubscriptions model a b = [ Window.resizes a
 
 -- Json Message parsers
 type Message = ChatMessage JsonMessageContent | EventMessage JsonMessageContent
+type alias Member = {
+  name : String
+  ,playerSymbol : PlaySymbol
+}
 type alias MessageMember =
-  { member : String
+  {
+  messageType : String 
+  ,member : Member
+  ,gameId : String
   , allMembers : Array.Array String
   }
 type alias JsonMessageContent = {
-  sender : String
+  messageType : String
+  ,sender : String
+  ,gameId : String
   ,message : String
-} 
+}
+
+type alias PlaySymbol = {
+  messageType : String  
+}
+
+playSymbolDecoder : Decoder PlaySymbol
+playSymbolDecoder =
+    object1 PlaySymbol ("$type" := Json.Decode.string)
+
+
+jsonMessageMemberDecoder1 : Decoder Member
+jsonMessageMemberDecoder1 =
+    object2 Member ("name" := Json.Decode.string) ("playerSymbol" := playSymbolDecoder)
+
 jsonMessageMemberDecoder : Decoder MessageMember
 jsonMessageMemberDecoder =
-    object2 MessageMember ("member" := Json.Decode.string) ("allMembers" := array Json.Decode.string)
+    object4 MessageMember ("$type" := Json.Decode.string) ("member" := jsonMessageMemberDecoder1) ("gameId" := Json.Decode.string) ("allMembers" := array Json.Decode.string)
 
 jsonMessageContentDecorder : Decoder JsonMessageContent
-jsonMessageContentDecorder = object2 JsonMessageContent ("sender" := Json.Decode.string) ("message" := Json.Decode.string)   
+jsonMessageContentDecorder = object4 JsonMessageContent ("$type" := Json.Decode.string) ("sender" := Json.Decode.string) ("gameId" := Json.Decode.string) ("message" := Json.Decode.string)   
 
 -- Http and WebSocket Service utils 
 joinGame model code b = 
@@ -199,12 +222,12 @@ playMultiPlayerGame  position model=
 sendMessage playerName gameCode msg = WebSocket.send (wSocketLink (fst playerName) gameCode) msg
 wSocketLink name code = ("ws://" ++ serverAddress ++ "/game/join?name=" ++ name ++ "&id=" ++ code) 
 
-isOnline v = if (String.contains "Joined" (fst v)) then 
+isOnline v = if (String.contains "Joined" v.messageType) then 
   True 
-  else if ((String.contains "Left" (fst v))) then False 
+  else if (String.contains "Left" v.messageType) then False 
   else False
 
-updatePlayers v = (snd v).allMembers
+updatePlayers v = v.allMembers
 
 isPositionShared v = (String.contains "Position" v)   
 
@@ -243,3 +266,11 @@ getCells model =
     ErrorBoard cells msg -> cells
     TieBoard cells msg ->  cells
     WinBoard cells msg sequence ->  cells
+
+playerParser memberMessage playerName currentPlayer= 
+  if (String.contains (fst playerName) memberMessage.member.name) 
+    then if (String.contains "PlayerO" memberMessage.member.playerSymbol.messageType) 
+      then PlayerO 
+      else PlayerX      
+  else
+    currentPlayer

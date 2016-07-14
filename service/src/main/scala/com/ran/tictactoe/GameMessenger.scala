@@ -4,6 +4,12 @@ import akka.actor._
 import akka.stream.OverflowStrategy
 import akka.stream.scaladsl._
 import MessageType._
+sealed trait Player
+final case object PlayerX extends  Player
+final case object PlayerO extends Player
+final case object NoPlayer extends Player
+
+case class PlayerDetails(name:String,playerSymbol : Player)
 trait GameMessenger {
   def gameFlow(sender: String, gameId: String): Flow[String, Message, Any]
   def pushMessage(message: GameMessage): Unit
@@ -11,75 +17,67 @@ trait GameMessenger {
 
 object GameMessenger {
   def create(system: ActorSystem): GameMessenger = {
-    // The implementation uses a single actor per chat to collect and distribute
-    // chat messages. It would be nicer if this could be built by stream operations
-    // directly.
     val chatActor =
       system.actorOf(Props(new Actor {
-
-        var subMap = Map.empty[String, Set[(String, ActorRef)]]
+        var subMap = Map.empty[String, Set[(PlayerDetails, ActorRef)]]
 
         def receive: Receive = {
           case NewPlayer(name, gameId, subscriber) ⇒
-            var subscribers = Set.empty[(String, ActorRef)]
-            subscribers = subMap.get(gameId) match {
+            subMap.get(gameId) match {
               case Some(sub) ⇒ {
-                val a = sub ++ Set(name -> subscriber)
-                subMap += (gameId -> a)
-                a
+                if (sub.size <= 1){
+                  val newPlayerSymbol = if(!sub.isEmpty)
+                        if(sub.head._1.playerSymbol == PlayerO) PlayerX else PlayerO
+                        else PlayerO
+                  val playerDetails = PlayerDetails(name, newPlayerSymbol)
+                  val nameToSubscriber = sub ++ Set(playerDetails -> subscriber)
+                  subMap += (gameId -> nameToSubscriber)
+                  dispatch(Joined(playerDetails, gameId, members(gameId)), gameId)
+                }
+                else
+                {
+                    errorDispatch(ErrorMessage(name, gameId, "Room has been already Occupied"), subscriber)
+                }
               }
               case None ⇒ {
-                val a = Set(name -> subscriber)
-                subMap += (gameId -> a)
-                a
+                val playerDetails = PlayerDetails(name,PlayerO)
+                val nameToSubscriber = Set(playerDetails -> subscriber)
+                subMap += (gameId -> nameToSubscriber)
+                dispatch(Joined(playerDetails, gameId, members(gameId)), gameId)
               }
             }
-            //println(subMap)
-            dispatch(Joined(name, gameId, members(gameId)), gameId)
-
           case msg: ReceiveMessage      ⇒ dispatch(msg.toGameMessage, msg.gameId)
           case msg: GameMessage ⇒ dispatch(msg, msg.gameId)
           case PlayerLeft(person, gameId) ⇒
-            var subscribers = Set.empty[(String, ActorRef)]
-            subscribers = subMap.get(gameId) match {
-              case Some(sub) ⇒ sub
-              case None      ⇒ throw new Exception("Subscribers Set is not present for this game id")
-            }
-            val set @ (name, ref) = subscribers.find(_._1 == person).get
-            // report downstream of completion, otherwise, there's a risk of leaking the
-            // downstream when the TCP connection is only half-closed
+            var subscribers = getSubscribers(gameId)
+            val set @ (playerDetails, ref) = subscribers.find(_._1.name == person).get
             ref ! Status.Success(Unit)
             subscribers -= set
             subMap += (gameId -> subscribers)
-            dispatch(Left(person, gameId, members(gameId)), gameId)
+            dispatch(Left(playerDetails, gameId, members(gameId)), gameId)
           case Terminated(sub) ⇒
             var subscribers = Set.empty[(String, ActorRef)]
             subMap = subMap.map(a ⇒ (a._1 -> a._2.filterNot(_._2 == sub)))
             // clean up dead subscribers, but should have been removed when `ParticipantLeft`
             subscribers = subscribers.filterNot(_._2 == sub)
         }
-        //def sendAdminMessage(msg: String): Unit = dispatch(Protocol.ChatMessage("admin", msg))
         def dispatch(msg: Message, gameId: String): Unit = {
-          var subscribers = Set.empty[(String, ActorRef)]
-          subscribers = subMap.get(gameId) match {
-            case Some(sub) ⇒ sub
-            case None      ⇒ throw new Exception("Subscribers Set is not present for this game id")
-          }
-          subscribers.foreach(_._2 ! msg)
+          getSubscribers(gameId).foreach(_._2 ! msg)
+        }
+        def errorDispatch(msg: Message, subscriber: ActorRef): Unit = {
+          subscriber ! msg
         }
         def members(gameId: String) = {
-          var subscribers = Set.empty[(String, ActorRef)]
-          subscribers = subMap.get(gameId) match {
+          getSubscribers(gameId).map(_._1.name).toSeq
+        }
+        private def getSubscribers(gameId:String):Set[(PlayerDetails, ActorRef)] = {
+          subMap.get(gameId) match {
             case Some(sub) ⇒ sub
-            case None      ⇒ throw new Exception("Subscribers Set is not present for this game id")
+            case None      ⇒ Set.empty[(PlayerDetails, ActorRef)] //throw new Exception("Subscribers Set is not present for this game id")
           }
-          subscribers.map(_._1).toSeq
         }
       }))
 
-    // Wraps the chatActor in a sink. When the stream to this sink will be completed
-    // it sends the `ParticipantLeft` message to the chatActor.
-    // FIXME: here some rate-limiting should be applied to prevent single users flooding the chat
     def gameInSink(sender: String, gameId: String) = Sink.actorRef[GameEvent](chatActor, PlayerLeft(sender, gameId))
 
     new GameMessenger {
@@ -89,10 +87,6 @@ object GameMessenger {
             .map(ReceiveMessage(sender, gameId, _))
             .to(gameInSink(sender, gameId))
 
-        // The counter-part which is a source that will create a target ActorRef per
-        // materialization where the chatActor will send its messages to.
-        // This source will only buffer one element and will fail if the client doesn't read
-        // messages fast enough.
         val out =
           Source.actorRef[GameMessage](1, OverflowStrategy.fail)
             .mapMaterializedValue(chatActor ! NewPlayer(sender, gameId, _))

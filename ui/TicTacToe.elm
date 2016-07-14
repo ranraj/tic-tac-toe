@@ -207,20 +207,26 @@ gameSettingsBox {board,lastMove,playerMode,playerName,connectionStatus,startRequ
 
 socketMessageHandler model str = 
   let       
-    newModel = case (decodeString (tuple2 (,) Json.Decode.string jsonMessageContentDecorder) str)  of
+    newModel = case (decodeString jsonMessageContentDecorder str)  of
       Result.Err a ->
         -- Joined / Left - Message Request
-        case (decodeString (tuple2 (,) Json.Decode.string jsonMessageMemberDecoder ) str) of
+        case (decodeString jsonMessageMemberDecoder str) of
           Result.Err e -> ({ model | messages = toString e :: model.messages},Cmd.none)
           Result.Ok v -> 
-            if (Array.length (snd v).allMembers <= 1) then 
-              ({ model | messages = toString v :: model.messages ,currentPlayer = PlayerX, board = EmptyBoard defaultCells (playerJoiningStatus (snd v).allMembers model.playerName) , connectionStatus = isOnline v,players = updatePlayers v},Cmd.none) 
+            if (Array.length v.allMembers <= 1) then 
+              ({ model | messages = toString v :: model.messages 
+                , currentPlayer = playerParser v model.playerName model.currentPlayer 
+                , board = EmptyBoard defaultCells (playerJoiningStatus v.allMembers model.playerName) 
+                , connectionStatus = isOnline v
+                , players = updatePlayers v
+                }
+              ,Cmd.none) 
             else 
-              ({ model | messages = toString v :: model.messages ,currentPlayer = if model.currentPlayer == NoPlayer then PlayerO else PlayerX, board = EmptyBoard defaultCells ((playerJoiningStatus (snd v).allMembers model.playerName) ++"! Ready to play"), connectionStatus = isOnline v,players = updatePlayers v},Cmd.none)
+              ({ model | messages = toString v :: model.messages ,currentPlayer = playerParser v model.playerName model.currentPlayer, board = EmptyBoard defaultCells ((playerJoiningStatus v.allMembers model.playerName) ++"! Ready to play"), connectionStatus = isOnline v,players = updatePlayers v},Cmd.none)
       Result.Ok r -> 
         -- CHAT MESSAGE REQUEST
         let 
-          positionMessage = (snd r).message
+          positionMessage = r.message
           remotePosition = 
             if (isPositionShared positionMessage) 
             then  
@@ -235,7 +241,7 @@ socketMessageHandler model str =
                         playGame v b
                 Nothing -> ({ model | messages = toString "Nothing received" :: model.messages},Cmd.none)
             else if (String.contains "Game.Reset" positionMessage) then
-              ({ model | board = EmptyBoard defaultCells ("Game has been rest by " ++ (isYou (snd r).sender) (fst model.playerName)),messages = toString r:: model.messages},Cmd.none)
+              ({ model | board = EmptyBoard defaultCells ("Game has been rest by " ++ (isYou r.sender) (fst model.playerName)),messages = toString r:: model.messages},Cmd.none)
             else 
               ({ model | messages = toString r:: model.messages},Cmd.none)
         in

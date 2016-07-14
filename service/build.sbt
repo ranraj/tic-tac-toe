@@ -11,6 +11,6 @@ libraryDependencies ++= {
     "com.typesafe.akka" %% "akka-stream" % akkaVersion,
     "com.typesafe.akka" %% "akka-http-experimental" % akkaVersion,
     "com.typesafe.akka" %% "akka-http-spray-json-experimental" % akkaVersion,
-    "com.lihaoyi" %% "upickle" % "0.2.8"
+    "com.lihaoyi" %% "upickle" % "0.4.1"
   )
 }
