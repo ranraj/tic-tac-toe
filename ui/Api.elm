@@ -1,34 +1,51 @@
 module Api exposing (..)
+
 import AnimationFrame
 import Style
-import AppStyle exposing (..)
 import Style.Properties exposing (..)
 import Style.Spring.Presets
 import String
-import Task
-import Http
-import Json.Decode exposing (Decoder,tuple2,decodeString, int, string, object1,object2,object4, (:=),array,at)
 import Array
 import WebSocket
-import AppConfig exposing (..)
-import AnimationFrame
+import Http
+import Task
+import Json.Encode
+import Json.Decode exposing (Decoder,tuple2,decodeString, int, string, object1,object2,object4, (:=),array,at)
 import Window exposing (Size)
 
-type alias Position = (Int,Int)
-type Board = EmptyBoard Cells String | PlayBoard Cells | WinBoard Cells String (List Position) | TieBoard Cells String | ErrorBoard Cells String
-type Player = PlayerO | PlayerX | NoPlayer
+-- Custom modules
+import AppConfig exposing (serverAddress)
+import CommonTypes exposing (..)
+import JsonMapper exposing (..)
+import RenderHelper exposing (..)
+
 type BoardUpdateResponse = Success (List Cell)| Failure String
 type Status = LastMove String | Default String | NotValidMove String | GameResult String | Error String
-type PlayerMode = SinglePlayer | MultiPlayer
 
-type alias Cells = List Cell
-type alias Cell = {
-    position : Position,    
-    player : Player,
-    animation : Style.Animation     
-}
+playGame position model = 
+  let
+    plotPlayerCellOnBoard player position cells =  
+      case (hasOccupied position cells) of    
+        NoPlayer ->         
+            Success (List.map 
+                     (\ cell -> case (position == cell.position) of 
+                        True -> {cell | player = player , animation = loadAnimation cell.animation}
+                        False -> cell) 
+                     cells)    
+        _ -> Failure "Invalid Move"
 
-playGame position model = case (model.board) of 
+    updateBoardModel cells model position = 
+      case (plotPlayerCellOnBoard model.nextPlayer position cells) of
+          Success b -> 
+            {
+                model |
+                lastMove = position
+                ,nextPlayer = if model.nextPlayer == PlayerO then PlayerX else PlayerO
+                ,board = fetchGameResult b
+            }  
+          Failure msg -> { model  | board = ErrorBoard cells msg}
+  in
+    case (model.board) of 
         PlayBoard cells->  (updateBoardModel cells model position,Cmd.none)                  
         EmptyBoard cells msg-> (updateBoardModel cells model position,Cmd.none)          
         ErrorBoard cells msg -> (updateBoardModel cells model position,Cmd.none)         
@@ -45,57 +62,41 @@ hasOccupied position cells =
       Nothing -> NoPlayer
 
 fetchGameResult : List Cell -> Board
-fetchGameResult cells = case (whoWin PlayerO cells winCellSequence) of
-    Just sequence -> WinBoard cells ("Player O Wins the Game") sequence
-    Nothing -> case (whoWin PlayerX cells winCellSequence) of
-      Just sequence -> WinBoard cells ("Player X Wins the Game") sequence
-      Nothing -> case (isFinishedBoard cells) of
-        True -> TieBoard cells "Game Tie"
-        False -> PlayBoard cells      
+fetchGameResult cells = 
+  let
+    isFinishedBoard cells = List.isEmpty (List.filter (\x -> x.player == NoPlayer) cells)
+  in
+    case (whoWin PlayerO cells winCellSequence) of
+      Just sequence -> WinBoard cells ("Player O Wins the Game") sequence
+      Nothing -> case (whoWin PlayerX cells winCellSequence) of
+        Just sequence -> WinBoard cells ("Player X Wins the Game") sequence
+        Nothing -> case (isFinishedBoard cells) of
+          True -> TieBoard cells "Game Tie"
+          False -> PlayBoard cells      
 
-filterCellsByPlayer : Player -> List Cell -> List (Int,Int)
-filterCellsByPlayer player cells = List.filter (\x -> x.player == player) cells |> List.map (\x -> x.position)
 
 whoWin : Player -> List Cell -> List (List Position) -> Maybe (List Position)
-whoWin player cells l = case l of
-  [] -> Nothing
-  (x::xs) -> case (isSubsetOf (filterCellsByPlayer player cells) x) of
-    True -> Just x
-    False -> whoWin player cells xs        
+whoWin player cells l = 
+  let    
+    isSubsetOf mainl subl = 
+      case subl of
+        [] -> True
+        (x::xs) -> case (List.member x mainl) of
+           True -> isSubsetOf mainl xs
+           False -> False 
 
-isFinishedBoard : List Cell -> Bool
-isFinishedBoard cells = List.isEmpty (List.filter (\x -> x.player == NoPlayer) cells)
-
-
-updateBoardModel cells model position = 
-  let          
-    updatedModel = case (plotPlayerCellOnBoard model.nextPlayer position cells) of
-      Success b -> 
-        {
-            model |
-            lastMove = position
-            ,nextPlayer = if model.nextPlayer == PlayerO then PlayerX else PlayerO
-            ,board = fetchGameResult b
-        }  
-      Failure msg -> { model  | board = ErrorBoard cells msg}
+    filterCellsByPlayer player cells = 
+      List.filter (\x -> x.player == player) cells |> List.map (\x -> x.position)
   in
-    updatedModel
-
-plotPlayerCellOnBoard : Player -> Position -> List Cell -> BoardUpdateResponse
-plotPlayerCellOnBoard player position cells =  
-  case (hasOccupied position cells) of    
-    NoPlayer ->         
-        Success (List.map 
-                 (\ cell -> case (position == cell.position) of 
-                    True -> {cell | player = player , animation = loadAnimation Spring cell.animation}
-                    False -> cell) 
-                 cells)    
-    _ -> Failure "Invalid Move"
+  case l of
+    [] -> Nothing
+    (x::xs) -> case (isSubsetOf (filterCellsByPlayer player cells) x) of
+      True -> Just x
+      False -> whoWin player cells xs        
 
 
-
-buildStatusFromResult : Board -> Position -> Status
-buildStatusFromResult board position =   
+fetchStatus : Board -> Position -> Status
+fetchStatus board position =   
   case board of
     TieBoard b msg -> GameResult msg
     WinBoard b msg sequence-> GameResult msg
@@ -103,20 +104,13 @@ buildStatusFromResult board position =
     EmptyBoard b msg -> Default msg
     ErrorBoard b msg -> NotValidMove (toString msg)
 
+getWinnerBoardSequence : Board -> List Position
 getWinnerBoardSequence board =  
   case board of
       WinBoard b msg winSeq -> winSeq
       _ -> [] 
 
 
--- Util --
-isSubsetOf : List a -> List a -> Bool
-isSubsetOf mainl subl = 
-  case subl of
-    [] -> True
-    (x::xs) -> case (List.member x mainl) of
-       True -> isSubsetOf mainl xs
-       False -> False 
 
 -- Static Data --           
 winCellSequence = [
@@ -143,70 +137,39 @@ defaultCells = [
   ]    
 
 -- Subscriptions
-socketSubscriptions model a b c= WebSocket.listen (wSocketLink (fst model.playerName) model.gameCode) a :: defaultSubscriptions model b c  
-
-defaultSubscriptions model a b = [ Window.resizes a  
-  , AnimationFrame.times b  
-   ] 
+getSubscribtions model receiveMessageAction reSizeAction animateAction = 
+  let
+    defaultSubscriptions = [ Window.resizes reSizeAction 
+      , AnimationFrame.times animateAction 
+    ]
+    socketSubscriptions= WebSocket.listen (wSocketLink (fst model.playerName) model.gameCode) receiveMessageAction :: defaultSubscriptions
+  in
+    if (model.isConnected) then (socketSubscriptions) else (defaultSubscriptions)  
 
 -- Json Message parsers
-type Message = ChatMessage JsonMessageContent | EventMessage JsonMessageContent
-type alias Member = {
-  name : String
-  ,playerSymbol : PlaySymbol
-}
-type alias MessageMember =
-  {
-  messageType : String 
-  ,member : Member
-  ,gameId : String
-  , allMembers : Array.Array String
-  }
-type alias JsonMessageContent = {
-  messageType : String
-  ,sender : String
-  ,gameId : String
-  ,message : String
-}
 
-type alias PlaySymbol = {
-  messageType : String  
-}
-
-playSymbolDecoder : Decoder PlaySymbol
-playSymbolDecoder =
-    object1 PlaySymbol ("$type" := Json.Decode.string)
-
-
-jsonMessageMemberDecoder1 : Decoder Member
-jsonMessageMemberDecoder1 =
-    object2 Member ("name" := Json.Decode.string) ("playerSymbol" := playSymbolDecoder)
-
-jsonMessageMemberDecoder : Decoder MessageMember
-jsonMessageMemberDecoder =
-    object4 MessageMember ("$type" := Json.Decode.string) ("member" := jsonMessageMemberDecoder1) ("gameId" := Json.Decode.string) ("allMembers" := array Json.Decode.string)
-
-jsonMessageContentDecorder : Decoder JsonMessageContent
-jsonMessageContentDecorder = object4 JsonMessageContent ("$type" := Json.Decode.string) ("sender" := Json.Decode.string) ("gameId" := Json.Decode.string) ("message" := Json.Decode.string)   
+parseEventMessage str = decodeString jsonEventMessageDecoder str
+parseGameMessage str = decodeString jsonPlayMessageDecoder str
 
 -- Http and WebSocket Service utils 
-joinGame model code b = 
-   if (String.isEmpty (fst model.playerName)) then {model | board = ErrorBoard defaultCells "Name Must not be Empty"} 
-  else if (String.isEmpty model.gameCode) then {model | board = ErrorBoard defaultCells "Code is mandatory to join"}
-  else
-  { model |isConnected = True, board = b , gameCode = code }
+
+joinGame model code board = 
+   if (String.isEmpty (fst model.playerName)) then
+     {model | board = ErrorBoard defaultCells "Name Must not be Empty"} 
+   else if (String.isEmpty model.gameCode) then 
+          {model | board = ErrorBoard defaultCells "Code is mandatory to join"}
+        else
+          { model |isConnected = True, board = board , gameCode = code }
 
 getRandomGameCode model a b =
   let
     name = fst model.playerName
     url = "http://" ++ serverAddress ++ "/game/code/request?name=" ++ name
   in 
-  if (String.isEmpty name) then ({model | board = ErrorBoard defaultCells "Name Must not be Empty"},Cmd.none) 
-  else 
-    (model,Task.perform a b (Http.get decodeGameCode url))
-
-decodeGameCode =
-   at ["code"] Json.Decode.string
+    if (String.isEmpty name) then 
+      ({model | board = ErrorBoard defaultCells "Name Must not be Empty"},Cmd.none) 
+    else 
+      (model,Task.perform a b (Http.get decodeGameCode url))
 
 playMultiPlayerGame  position model= 
   if model.isConnected then 
@@ -274,3 +237,25 @@ playerParser memberMessage playerName currentPlayer=
       else PlayerX      
   else
     currentPlayer
+
+
+encodeJsonMessage model = encodeJson model getCells
+
+mapStorageInput modelJson defaultModel =  
+  case (decodeJson modelJson) of
+    Ok savedModel -> parseStoredToDefaultModel defaultModel savedModel
+    Err e -> {defaultModel | messages = toString e :: defaultModel.messages}
+
+
+
+parseStoredToDefaultModel defaultCells storedModel =  
+  {
+  defaultCells | playerName = storedModel.playerName
+  ,gameCode = storedModel.gameCode
+  ,lastMove = storedModel.lastMove
+  ,isConnected = storedModel.isConnected
+  ,playerMode = storedModel.playerMode  
+  ,board = PlayBoard (mapStoredCellToModel storedModel.cells)
+  }
+
+mapStoredCellToModel cells = List.map (\a -> Cell a.position a.player initialWidgetStyle) cells

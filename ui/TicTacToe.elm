@@ -1,3 +1,4 @@
+port module TicTacToe exposing (..)
 import Html exposing (..)
 import Html.App as App
 import Html.Events exposing (..)
@@ -14,11 +15,14 @@ import Style.Properties exposing (..)
 import Style.Spring.Presets
 import Array
 import String
+import Json.Encode
+import Json.Decode exposing ((:=))
 
 -- Custom Module
 import AppStyle exposing (..)
 import Api exposing (..)
-import UI exposing (..)
+import RenderHelper exposing (..)
+import CommonTypes exposing (..)
 
 type Msg = Played Position  | Reset | PlayerModeToggle | CreateGameEvent | JoinApply
   | Resize Size  | Animate Time 
@@ -49,7 +53,7 @@ type alias Model = {
   ,currentPlayer : Player
   }
 
-main = App.program{ init=init,view = view ,update = update,subscriptions= subscriptions }
+main = App.programWithFlags{ init=init,view = view ,update = updateWithStorage,subscriptions= subscriptions }
 
 -- Update
 update : Msg -> Model -> (Model,Cmd Msg)
@@ -101,7 +105,6 @@ update msg model =  case msg of
 
   ShowOrHide flag -> menuAnimation model flag
 
-
 -- View
 view model =    
     div [Html.Attributes.style []] [
@@ -121,16 +124,31 @@ view model =
     ] 
 
 -- Init
-init : (Model, Cmd Msg)
-init = (Model (Default "New Game") PlayerO (EmptyBoard defaultCells "New Game") (0,0) (Size 0 0) SinglePlayer False False True "" "" ("",False) [] [] False (Style.init menuStyles.closed) False Array.empty False NoPlayer, sizeTask)
+init : Json.Encode.Value -> ( Model, Cmd Msg )
+init savedModel =  mapStorageInput savedModel model  ! [sizeTask]
 
+port setStorage : Json.Encode.Value -> Cmd msg
+
+port focus : String -> Cmd msg
+
+model = Model (Default "New Game") PlayerO (EmptyBoard defaultCells "New Game") (0,0) (Size 0 0) SinglePlayer False False True "" "" ("",False) [] [] False (Style.init menuStyles.closed) False Array.empty False NoPlayer
+
+updateWithStorage msg model =
+  let
+    (newModel, cmds) =
+      update msg model
+  in
+    ( newModel
+    , Cmd.batch [ encodeJsonMessage newModel |> setStorage , cmds ]
+    )
+ 
 -- Task
 sizeTask = Task.perform Resize Resize Window.size
 
 -- Sub
 subscriptions : Model -> Sub Msg
 subscriptions model =
-  Sub.batch (if (model.isConnected) then (socketSubscriptions model ReceiveMessage Resize Animate) else (defaultSubscriptions model Resize Animate))
+  Sub.batch (getSubscribtions model ReceiveMessage Resize Animate)
    
 
 boardBox {board,screenSize} =       
@@ -143,7 +161,7 @@ boardBox {board,screenSize} =
 
 toolBox {board,lastMove,playerMode,connectionStatus,startRequest,gameCode} = 
   let               
-    gameStatus = statusToMessage (buildStatusFromResult board lastMove)        
+    gameStatus = statusToMessage (fetchStatus board lastMove)        
     
   in
     div [toolBoxStyle][
@@ -153,7 +171,7 @@ toolBox {board,lastMove,playerMode,connectionStatus,startRequest,gameCode} =
          ]                  
     ]   
 
-gameSettingsBox {board,lastMove,playerMode,playerName,connectionStatus,startRequest,gameCode,isConnected,messages,players,currentPlayer} = 
+gameSettingsBox {board,lastMove,playerMode,playerName,connectionStatus,startRequest,gameCode,isConnected,messages,players,currentPlayer,menu} = 
   let     
     multiPlayerToolBoxVisible = if (playerMode == MultiPlayer) then "block" else "none"
   in 
@@ -166,7 +184,7 @@ gameSettingsBox {board,lastMove,playerMode,playerName,connectionStatus,startRequ
           div[][
             --span [] [text "Player Name "]
            br [] []
-           ,input [ placeholder "Player Name",textStyle1,Html.Attributes.style [("background", if (snd playerName) then "#dddddd" else "#ffffff")],onInput InputPlayerName] [text (fst playerName)]           
+           ,input [ placeholder "Player Name",textStyle1,Html.Attributes.style [("background", if (snd playerName) then "#dddddd" else "#ffffff")],onInput InputPlayerName,Html.Attributes.value (fst playerName)] []           
            ,button [buttonStyle1,onClick (HideComponent playerName) ] [text (if (snd playerName) then "Edit " else "Save")]
           ]
           ,div [] [
@@ -197,20 +215,21 @@ gameSettingsBox {board,lastMove,playerMode,playerName,connectionStatus,startRequ
               ]
             ]
          ]
-         {-,div []
+         --UI Game Message logger
+         ,div []
           [                     
           input [textStyle1,onInput InputMessage] []
           , button [buttonStyle1,onClick SendMessage] [text "Send"]
-          ,div [] (List.map (\msg -> div [] [ text msg ]) messages)
-          ]-}
+         -- ,div [] (List.map (\msg -> div [] [ text msg ]) messages)-}         
+          ]
   ]
 
 socketMessageHandler model str = 
   let       
-    newModel = case (decodeString jsonMessageContentDecorder str)  of
+    newModel = case (parseGameMessage str)  of
       Result.Err a ->
         -- Joined / Left - Message Request
-        case (decodeString jsonMessageMemberDecoder str) of
+        case (parseEventMessage str) of
           Result.Err e -> ({ model | messages = toString e :: model.messages},Cmd.none)
           Result.Ok v -> 
             if (Array.length v.allMembers <= 1) then 
