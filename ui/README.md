@@ -1,37 +1,41 @@
 # tic-tac-toe
-  This is project is a use case to practice typed functional language.  Language : Elm-lang
+  This is project is a use case to practice typed functional language. 
+
+##Language : Elm-lang
 
 
-How to Execute TciTacToe application ?
+How to install TciTacToe application dependecy packages?
 
-    Check out the source code
+    Check out the source code    
 
-    Install Dependency
+    Get in to the project directory. 
 
-    Get in to the project directory.
+    Install Dependency using 
+    
+    ```elm
+    elm package install
+    ```
 
-    Dependency installation
+        Execute the elm package install and it will prompt your permission to download the dependency. Type y and Hit.
 
-    Execute the elm package install and it will prompt your permission to download the dependency. Type y and Hit.
+How to access the application?
 
-    Start the application
+    Note : Make sure ther service is up and running
+    Find the index.html file placed in the src/web location. Simply open the html in the browser and start play.
 
-    Run the elm reactor command from the project direct. Then elm will expose tictactoe application in the default port. (8000)
+How to make project?
 
-    Access the application
+    If you want to customize the service running port in the Elm ui.
 
-    Start play from the TicTacToe-local url.
+    Do the chanes in the src/Elm/AppConfig.elm 
 
-How to add dependency manually using elm-package manager?
+    ```
+    serverAddress = localhost
+    ```
+    Execute the below command from the root directory to rebuild the project
 
-Elm provides way to add required dependency through the elm package manager.
+    elm make src/Elm/TicTacToe.elm --output=src/web/tictactoe.js
 
-    elm package install elm-lang/core
+    It creats a javascript file ( Elm source complied to a JS file )
 
-    elm package install elm-lang/html
 
-    elm package install elm-lang/svg
-
-    elm package install elm-lang/window
-
-After the successful required package installation , elm will create elm-package.json file. Which is the build file for elm reactor.
