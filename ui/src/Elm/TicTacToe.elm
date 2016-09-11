@@ -22,6 +22,7 @@ import Json.Decode exposing ((:=))
 import Api exposing (..)
 import RenderHelper exposing (..)
 import CommonTypes exposing (..)
+import AnimationHelper exposing (..)
 
 type Msg = Played Position  | Reset | PlayerModeToggle | CreateGameEvent | JoinApply
   | Resize Size  | Animate Time 
@@ -151,10 +152,10 @@ subscriptions model =
    
 
 boardBox {board,screenSize} =       
-  div [Html.Attributes.style [boxAlign screenSize]] [          
+  div [Html.Attributes.style [("float",boxAlignStyle screenSize)]] [          
       Svg.svg [Svg.Attributes.class "board-box", version "1.1", x "0", y "0", viewBox "0 0" 
-        ,width (px (windowSize screenSize)),
-        height (px (windowSize screenSize))
+        ,width (px (boardSize screenSize)),
+        height (px (boardSize screenSize))
       ] (drawBoard board screenSize)            
   ]
 

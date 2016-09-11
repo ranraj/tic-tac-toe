@@ -18,6 +18,7 @@ import AppConfig exposing (serverAddress)
 import CommonTypes exposing (..)
 import JsonMapper exposing (..)
 import RenderHelper exposing (..)
+import AnimationHelper exposing (..)
 
 type BoardUpdateResponse = Success (List Cell)| Failure String
 type Status = LastMove String | Default String | NotValidMove String | GameResult String | Error String

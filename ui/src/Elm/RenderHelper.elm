@@ -1,107 +1,51 @@
 module RenderHelper exposing (..)
-import Svg exposing (..)
-import Svg.Attributes exposing (..)
+
+{-| 
+  RenderHelper module supports TicTacToe application to manage Responsive UI based on the screen resolution.    
+  All these helper methods are linked with Orientation to make Responsive UI.
+-}
+
 import Window exposing (Size)
-import AnimationFrame
-import Style
-import Time exposing (Time, second)
-import CommonTypes exposing (..)
-import Style.Properties exposing (..)
-import Style.Spring.Presets
-import Color exposing (rgb, rgba,white)
-import Time exposing (Time, second)
-import Ease
+
+{- Window size identified by Orientation type
+  1. Portrait
+  2. Landscape  
+-}
 
 type Orientation = Portrait | Landscape
+
+{- 
+ screenOrientation is an expression which takes Window.Size as input parameter and results the Orientation type
+ It computes the result based on the screen width and height to decide Orientation
+-}
 
 screenOrientation : Size -> Orientation
 screenOrientation size = if size.width < size.height  then Portrait else Landscape
 
 px v = (toString v) ++ "px" 
 
-windowSize : Size -> Int
-windowSize size = case (screenOrientation size) of        
-        Portrait -> (size.width) - 33
-        Landscape -> (size.height) - 33
+{-
+boardSize function takes Window size as parameter and return TicTacToe board size based on the current Orientation
+This values is used to draw square board. Board size is deducted by 15 as board margin value.
+-}
+
+boardSize : Size -> Int
+boardSize size = case (screenOrientation size) of        
+        Portrait -> (size.width) - 15
+        Landscape -> (size.height) - 15
+
+{-
+Board has 3 X 3 tiles.    
+This function gets Window size as parameter and it divides board by 3 and return as result.
+-}
 
 tileSize : Size -> Int
-tileSize size = case (screenOrientation size) of        
-        Portrait -> (size.width // 3) - 11
-        Landscape -> (size.height // 3) - 11
+tileSize size = (boardSize size) // 3
 
-boxAlign size= case (screenOrientation size) of 
-    Portrait -> ("float","none")
-    Landscape -> ("float","left")
+{-
+    boxAlignStyle retun css style value with respect to screenOrientation
+-}
+boxAlignStyle size = case (screenOrientation size) of 
+    Portrait -> "none"
+    Landscape -> "left"
 
--- Animation style
-
-menuAnimation model flag = 
-  let
-    menuRender s = 
-      ( { model
-          | style =
-              Style.animate
-              |> Style.duration (second / 5)
-              |> Style.easing (\x -> x)
-              |> Style.to s
-              |> Style.on model.style
-              ,menu = not flag    
-        }
-        , Cmd.none
-      )
-  in
-  if(flag) then                                      
-    menuRender menuStyles.closed
-  else            
-    menuRender menuStyles.open
-
-cellAnimation : Time -> List Cell -> List Cell
-cellAnimation time cells = 
-  let
-    cellMap time cell = {cell | animation = Style.tick time cell.animation}
-  in
-    List.map (cellMap time) cells
-
-
-loadAnimation animation =            
-    Style.queue 
-    |> Style.spring Style.Spring.Presets.noWobble
-    |> Style.duration (0.1 * second)
-    |> Style.to
-        [ Scale 0.98
-        ]
-    |> Style.andThen
-    |> Style.spring Style.Spring.Presets.wobbly
-    |> Style.duration (0.1 * second)
-    |> Style.to
-        [ Scale 1.0
-        ]
-    |> (\act -> Style.on animation act)            
-
-menuStyles =
-    { open =
-        [ Left 0.0 Px
-        , Opacity 1.0
-        , Color (white)
-        ]
-    , closed =
-        [ Left -350.0 Px
-        , Opacity 0.0
-        , Color (white)
-        ]
-    }
-
-initialWidgetStyle =
-    Style.init
-        [ Display InlineBlock
-        , Rotate 0.0 Turn
-        , RotateX 0.0 Turn
-        , RotateY 0.0 Turn
-        , TranslateY 0.0 Px
-        , TranslateX 0.0 Px
-        , Rotate 0.0 Turn
-        , Opacity 1
-        , BackgroundColor (rgba 58 40 69 1.0)
-        , Color (rgba 255 255 255 1.0)
-        , Scale 1.0                
-        ]
