@@ -46,8 +46,8 @@ type alias Model = {
   ,messages : List String
   ,displayMessages : List String
   ,isConnected : Bool
-  ,style : Style.Animation
-  ,menu : Bool
+  ,menuStyle : Style.Animation
+  ,menuFlag : Bool
   ,players : Array.Array String
   ,playLock : Bool
   ,currentPlayer : Player
@@ -68,11 +68,11 @@ update msg model =  case msg of
 
   Animate time ->                 
       case (model.board) of 
-        PlayBoard cells-> ({model | board = PlayBoard (cellAnimation time cells), style = Style.tick time model.style},Cmd.none)
-        EmptyBoard cells msg -> ({model | style = Style.tick time model.style},Cmd.none)
-        ErrorBoard cells msg -> ({model | board = ErrorBoard (cellAnimation time cells) msg,style = Style.tick time model.style},Cmd.none)
-        TieBoard cells msg ->  ({ model  | board = TieBoard (cellAnimation time cells ) msg ,status = NotValidMove ("Game Over as match result :" ++ msg),style = Style.tick time model.style},Cmd.none)         
-        WinBoard cells msg sequence ->  ({ model  | board = WinBoard (cellAnimation time cells ) msg sequence,status = NotValidMove ("Game Over as match result :" ++ msg),style = Style.tick time model.style},Cmd.none)
+        PlayBoard cells-> ({model | board = PlayBoard (executeTileAnimation time cells), menuStyle = Style.tick time model.menuStyle},Cmd.none)
+        EmptyBoard cells msg -> ({model | menuStyle = Style.tick time model.menuStyle},Cmd.none)
+        ErrorBoard cells msg -> ({model | board = ErrorBoard (executeTileAnimation time cells) msg,menuStyle = Style.tick time model.menuStyle},Cmd.none)
+        TieBoard cells msg ->  ({ model  | board = TieBoard (executeTileAnimation time cells ) msg ,status = NotValidMove ("Game Over as match result :" ++ msg),menuStyle = Style.tick time model.menuStyle},Cmd.none)         
+        WinBoard cells msg sequence ->  ({ model  | board = WinBoard (executeTileAnimation time cells ) msg sequence,status = NotValidMove ("Game Over as match result :" ++ msg),menuStyle = Style.tick time model.menuStyle},Cmd.none)
 
   PlayerModeToggle -> ({model | playerMode = if model.playerMode == SinglePlayer then MultiPlayer else SinglePlayer},Cmd.none)        
 
@@ -110,15 +110,15 @@ view model =
     div [Html.Attributes.style []] [
      boardBox model     
      ,div
-            [Html.Attributes.class "menu-box",  Html.Attributes.style (Style.render model.style)               
+            [Html.Attributes.class "menu-box",  Html.Attributes.style (Style.render model.menuStyle)               
             ]
-            [ button [Html.Attributes.class "btn-red",onClick (ShowOrHide model.menu)] [text "Close"]
+            [ button [Html.Attributes.class "btn-red",onClick (ShowOrHide model.menuFlag)] [text "Close"]
               ,h1 [] [ text "Tic-Tac-Toe" ]
               ,gameSettingsBox model
             ]
         
      , div [] [div [] [
-       button [Html.Attributes.class "btn-menu",onClick (ShowOrHide model.menu)] [text "Menu"]],
+       button [Html.Attributes.class "btn-menu",onClick (ShowOrHide model.menuFlag)] [text "Menu"]],
        toolBox model
      ]     
     ] 
@@ -171,7 +171,7 @@ toolBox {board,lastMove,playerMode,connectionStatus,startRequest,gameCode} =
          ]                  
     ]   
 
-gameSettingsBox {board,lastMove,playerMode,playerName,connectionStatus,startRequest,gameCode,isConnected,messages,players,currentPlayer,menu} = 
+gameSettingsBox {board,lastMove,playerMode,playerName,connectionStatus,startRequest,gameCode,isConnected,messages,players,currentPlayer,menuFlag} = 
   let     
     multiPlayerToolBoxVisible = if (playerMode == MultiPlayer) then "block" else "none"
   in 

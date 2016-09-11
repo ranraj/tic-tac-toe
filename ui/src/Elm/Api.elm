@@ -23,6 +23,12 @@ import AnimationHelper exposing (..)
 type BoardUpdateResponse = Success (List Cell)| Failure String
 type Status = LastMove String | Default String | NotValidMove String | GameResult String | Error String
 
+{-
+  playGame function is the core function in TicTacToe Api.
+  This function being called in the local and remote play.
+  It validates the Invalid move and fetching game result in every play.  
+-}
+
 playGame position model = 
   let
     plotPlayerCellOnBoard player position cells =  
@@ -30,7 +36,7 @@ playGame position model =
         NoPlayer ->         
             Success (List.map 
                      (\ cell -> case (position == cell.position) of 
-                        True -> {cell | player = player , animation = loadAnimation cell.animation}
+                        True -> {cell | player = player , animation = applyTileAnimationProperties cell.animation}
                         False -> cell) 
                      cells)    
         _ -> Failure "Invalid Move"
