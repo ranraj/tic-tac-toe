@@ -1,5 +1,9 @@
 module SocketHandler exposing (..)
 
+{-|
+  Application using WebSocket to communicate between players.
+  WebSokcetHander act like a sender and receiver.
+-}
 import String
 import Array
 import Json.Encode

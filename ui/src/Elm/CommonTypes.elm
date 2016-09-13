@@ -1,5 +1,10 @@
 module CommonTypes exposing (..)
 
+{-|
+  Common Application Types and static data grouped in one place.
+  It is across accross all the modules.
+-}
+
 import Style
 import Http
 import Window exposing (Size)

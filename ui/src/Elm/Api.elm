@@ -1,5 +1,9 @@
 module Api exposing (..)
 
+{-| 
+  Api is core module , which holds all business logic and supporting function for game.
+-}
+
 import AnimationFrame
 import Style
 import Style.Properties exposing (..)
