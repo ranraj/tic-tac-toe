@@ -107,7 +107,7 @@ update msg model =
     Resize size -> { model | screenSize = size } ! []
 
     Reset -> if model.isConnected 
-              then model ! [ Api.sendMessage model.playerName model.gameCode "Game.Reset" ]
+              then model ! [ Api.messageSender model.playerName model.gameCode "Game.Reset" ]
               else { model | board = EmptyBoard CommonTypes.defaultCells "New Game" } ! [ sizeTask ]
 
     Animate time ->                 
@@ -180,11 +180,11 @@ update msg model =
     SendMessage -> 
       { model | inputMessage = "" }
       ! if model.isConnected 
-         then [ Api.sendMessage model.playerName model.gameCode model.inputMessage ] 
+         then [ Api.messageSender model.playerName model.gameCode model.inputMessage ] 
          else []
 
     ReceiveMessage str -> 
-      Api.socketMessageHandler model str
+      Api.messageReceiver model str
 
     JoinApply -> 
       Api.joinGame model model.gameCode (EmptyBoard CommonTypes.defaultCells "New Game") ! []
@@ -338,7 +338,7 @@ gameMenu { board,lastMove,playerMode,playerName,connectionStatus,gameCode,isConn
             [Html.Attributes.style [("display",if (Array.length players > 0) then "block" else "none")]] 
             [         
              span [] [text "Players : " ]         
-             ,span [] [text (Api.playerJoiningStatus players playerName) ]
+             ,span [] [text (Api.getPlayerJoiningStatus players playerName) ]
              ,br [][]
              ,span []
                [

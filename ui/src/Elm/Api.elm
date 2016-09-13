@@ -6,7 +6,6 @@ import Style.Properties exposing (..)
 import Style.Spring.Presets
 import String
 import Array
-import WebSocket
 import Http
 import Task
 import Json.Encode
@@ -20,6 +19,7 @@ import CommonTypes exposing (..)
 import JsonMapper exposing (..)
 import RenderHelper exposing (..)
 import AnimationHelper exposing (..)
+import SocketHandler
 
 type BoardUpdateResponse = Success Cells | Failure String
 type Status = LastMove String | Default String | NotValidMove String | GameResult String | Error String
@@ -85,7 +85,7 @@ playGameRemote  position model=
     else 
       if ( model.currentPlayer == model.nextPlayer ) 
         then
-          model ! [ sendMessage model.playerName model.gameCode (lastMoveToMessage position) ]
+          model ! [ SocketHandler.sendMessage model.playerName model.gameCode (lastMoveToMessage position) ]
         else   
           { model | board = EmptyBoard (getCells model) "Waiting for other player to play"} ! []
   else   
@@ -179,30 +179,6 @@ getWinnerBoardSequence board =
       WinBoard b msg winSeq -> winSeq
       _ -> [] 
 
--- Static Data --           
-winCellSequence = [
-  [(0,0),(0,1),(0,2)]
-  ,[(0,0),(1,0),(2,0)]
-  ,[(0,0),(1,1),(2,2)]
-  ,[(0,1),(1,1),(2,1)]
-  ,[(1,0),(1,1),(1,2)]
-  ,[(2,0),(2,1),(2,2)]
-  ,[(0,2),(1,2),(2,2)]
-  ,[(0,2),(1,1),(2,0)]
-  ] 
-
-defaultCells = [
-   Cell (0,0) NoPlayer initialWidgetStyle
-  ,Cell (0,1) NoPlayer initialWidgetStyle
-  ,Cell (0,2) NoPlayer initialWidgetStyle
-  ,Cell (1,0) NoPlayer initialWidgetStyle
-  ,Cell (1,1) NoPlayer initialWidgetStyle
-  ,Cell (1,2) NoPlayer initialWidgetStyle
-  ,Cell (2,0) NoPlayer initialWidgetStyle
-  ,Cell (2,1) NoPlayer initialWidgetStyle
-  ,Cell (2,2) NoPlayer initialWidgetStyle 
-  ]    
-
 -- Subscriptions
 
 getSubscribtions model receiveMessageAction reSizeAction animateAction = 
@@ -211,7 +187,7 @@ getSubscribtions model receiveMessageAction reSizeAction animateAction =
       , AnimationFrame.times animateAction 
     ]
     socketSubscriptions = 
-      WebSocket.listen (AppConfig.wSocketApiUrl model.playerName model.gameCode) receiveMessageAction :: defaultSubscriptions
+      SocketHandler.socketListener model receiveMessageAction defaultSubscriptions
   in
     if (model.isConnected) then (socketSubscriptions) else (defaultSubscriptions)  
 
@@ -253,11 +229,7 @@ createGameCode model a b =
     else 
       model ! [Task.perform a b (Http.get decodeGameCode url)]
 
-{-| sendMessage api involves in the Remote play model
-  It publish the current play position to other player.
--}
-
-sendMessage playerName gameCode msg = WebSocket.send (AppConfig.wSocketApiUrl playerName gameCode) msg   
+ 
 
 {-| playModeToMessage takes GameMode and connection status and it convert to render as String
 -}
@@ -275,19 +247,10 @@ playModeToMessage gameMode connectionStatus=
 lastMoveToMessage lastMovePostion= ("Position = [" ++ toString (fst lastMovePostion) ++ "," ++ toString (snd lastMovePostion) ++"]")
 
 {-|
-  senderAndReceiverEquals check sender and reciver
+  getPlayerJoiningStatus check sender and reciver and render it for status
 -}
 
-senderAndReceiverEquals sender receiver = 
-  case (sender == receiver) of
-    True -> "You"
-    False -> sender
-
-{-|
-  playerJoiningStatus check sender and reciver and render it for status
--}
-
-playerJoiningStatus players playerName = 
+getPlayerJoiningStatus players playerName = 
   let    
     renderPlayerName index default players player = 
       let        
@@ -297,7 +260,7 @@ playerJoiningStatus players playerName =
           Nothing-> default
         v = (arrayGetOrElse index default players)
   in  
-    senderAndReceiverEquals v player
+    SocketHandler.senderAndReceiverEquals v player
   in
     (renderPlayerName 0 "_" players playerName) 
     ++ " & " 
@@ -341,98 +304,12 @@ decodeJsonToModel modelJson defaultModel =
       Ok jsonModel -> parseJsonModelToModel defaultModel jsonModel
       Err e -> { defaultModel | messages = toString e :: defaultModel.messages}
 
-{-| 
-  socketMessageHandler help to manage socket incoming messages
-  If message received it undergoes for further process.
-    That should be catched in the any of the defined message category.
-    1 ) Game Message - Which is only used to share the play position
-    2 ) Event Message - It has only Join and Left message. 
+{- messageReceiver and messageSender are act like a router
+  Any validation or business logic needed , that can be included here.
 -}
 
-socketMessageHandler model message = 
-  let      
-    playerMessageToTypeParser memberMessage playerName currentPlayer= 
-      if (String.contains playerName memberMessage.member.name) 
-        then if (String.contains "PlayerO" memberMessage.member.playerSymbol.messageType) 
-          then PlayerO 
-          else PlayerX      
-      else
-        currentPlayer
-
-    isOnline v =
-     if (String.contains "Joined" v.messageType) then 
-      True 
-      else
-       if (String.contains "Left" v.messageType) 
-         then False 
-         else False  
-
-    parseGamePlayMessage = decodeString jsonPlayMessageDecoder message      
-
-    handleGameEventMessage = 
-      case (decodeString jsonEventMessageDecoder message) of
-        Result.Err eventMessageError -> { model | messages = toString eventMessageError :: model.messages} ! []
-        Result.Ok eventMessageValue -> 
-          if (Array.length eventMessageValue.allMembers <= 1) 
-            then 
-              { model |
-                messages = toString eventMessageValue :: model.messages 
-                ,currentPlayer = playerMessageToTypeParser eventMessageValue model.playerName model.currentPlayer 
-                ,board = EmptyBoard defaultCells (playerJoiningStatus eventMessageValue.allMembers model.playerName) 
-                ,connectionStatus = isOnline eventMessageValue
-                ,players = eventMessageValue.allMembers
-              } ! []                
-            else 
-              { model |
-               messages = toString eventMessageValue :: model.messages 
-               ,currentPlayer = playerMessageToTypeParser eventMessageValue model.playerName model.currentPlayer
-               ,board = EmptyBoard defaultCells ((playerJoiningStatus eventMessageValue.allMembers model.playerName) ++"! Ready to play")
-               ,connectionStatus = isOnline eventMessageValue
-               ,players = eventMessageValue.allMembers
-              } ! []    
-
-    decodePostionFromSting position = decodeString (tuple2 (,) Json.Decode.int Json.Decode.int) position
-
-    {- If possition received in message then parse position string to Position type -}          
-
-    handlePositionMessage playMessageValue =         
-              case Array.get 1 (Array.fromList (String.split "=" playMessageValue.message)) of
-                Just positionString ->  
-                  case (decodePostionFromSting positionString) of
-                    Result.Err e -> 
-                      { model | messages =  toString e :: model.messages } ! []
-                    Result.Ok positionValue -> 
-                      let
-                        newModel = { model | messages = (toString message) :: model.messages } 
-                      in
-                        playGameLocal positionValue newModel
-                Nothing -> { model | messages = toString "Nothing in message" :: model.messages} ! []            
-  in 
-    case parseGamePlayMessage of
-      Result.Err playMessageError -> 
-        {- If incoming fails to parse Play message then try to parse 
-        -}
-        handleGameEventMessage
-
-      Result.Ok playMessageValue ->           
-        if ( String.contains "Position" playMessageValue.message ) 
-          then  
-            handlePositionMessage playMessageValue
-          else
-            {- If board reset reqested from sender , this block will reset 
-            Todo : Reset request should be accepted by the receiver
-            -} 
-            if (String.contains "Game.Reset" playMessageValue.message) 
-            then 
-              { model |
-               board = 
-                EmptyBoard defaultCells ("Game has been rest by " 
-                  ++ (senderAndReceiverEquals playMessageValue.sender)  model.playerName)
-               ,messages = toString playMessageValue :: model.messages
-               } ! []
-            else 
-              {- If the received message does not catched in any of the category then, just log it in the messages
-              -}
-              { model | messages = toString playMessageValue :: model.messages} ! []
+messageReceiver model message = 
+  SocketHandler.processIncomingMessage model message playGameLocal getPlayerJoiningStatus
                      
-
+messageSender playerName gameCode msg = 
+  SocketHandler.sendMessage playerName gameCode msg  

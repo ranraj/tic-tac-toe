@@ -4,19 +4,29 @@ import String
 import Array
 import Json.Encode
 import Json.Decode exposing (tuple2,decodeString, int)
+import WebSocket
 
 import CommonTypes exposing (..)
 import JsonMapper
+import AppConfig
+
+socketListener model receiveMessageAction defaultSubscriptions= WebSocket.listen (AppConfig.wSocketApiUrl model.playerName model.gameCode) receiveMessageAction :: defaultSubscriptions
+
+{-| sendMessage api involves in the Remote play model
+  It publish the current play position to other player.
+-}
+
+sendMessage playerName gameCode msg = WebSocket.send (AppConfig.wSocketApiUrl playerName gameCode) msg  
 
 {-| 
-  socketMessageHandler help to manage socket incoming messages
+  processIncomingMessage helps to manage socket incoming messages
   If message received it undergoes for further process.
     That should be catched in the any of the defined message category.
     1 ) Game Message - Which is only used to share the play position
     2 ) Event Message - It has only Join and Left message. 
 -}
 
-socketMessageHandler model message playGameLocal = 
+processIncomingMessage model message playGameLocal getPlayerJoiningStatus = 
   let      
     playerMessageToTypeParser memberMessage playerName currentPlayer= 
       if (String.contains playerName memberMessage.member.name) 
@@ -45,7 +55,7 @@ socketMessageHandler model message playGameLocal =
               { model |
                 messages = toString eventMessageValue :: model.messages 
                 ,currentPlayer = playerMessageToTypeParser eventMessageValue model.playerName model.currentPlayer 
-                ,board = EmptyBoard CommonTypes.defaultCells (playerJoiningStatus eventMessageValue.allMembers model.playerName) 
+                ,board = EmptyBoard defaultCells (getPlayerJoiningStatus eventMessageValue.allMembers model.playerName) 
                 ,connectionStatus = isOnline eventMessageValue
                 ,players = eventMessageValue.allMembers
               } ! []                
@@ -53,7 +63,7 @@ socketMessageHandler model message playGameLocal =
               { model |
                messages = toString eventMessageValue :: model.messages 
                ,currentPlayer = playerMessageToTypeParser eventMessageValue model.playerName model.currentPlayer
-               ,board = EmptyBoard CommonTypes.defaultCells ((playerJoiningStatus eventMessageValue.allMembers model.playerName) ++"! Ready to play")
+               ,board = EmptyBoard defaultCells ((getPlayerJoiningStatus eventMessageValue.allMembers model.playerName) ++"! Ready to play")
                ,connectionStatus = isOnline eventMessageValue
                ,players = eventMessageValue.allMembers
               } ! []    
@@ -93,8 +103,8 @@ socketMessageHandler model message playGameLocal =
             then 
               { model |
                board = 
-                EmptyBoard CommonTypes.defaultCells ("Game has been rest by " 
-                  ++ (whoSend playMessageValue.sender)  model.playerName)
+                EmptyBoard defaultCells ("Game has been rest by " 
+                  ++ (senderAndReceiverEquals playMessageValue.sender)  model.playerName)
                ,messages = toString playMessageValue :: model.messages
                } ! []
             else 
@@ -102,33 +112,11 @@ socketMessageHandler model message playGameLocal =
               -}
               { model | messages = toString playMessageValue :: model.messages} ! []
 
-
-{-|
-  playerJoiningStatus check sender and reciver and render it for status
--}
-
-playerJoiningStatus players playerName = 
-  let    
-    renderPlayerName index default players player = 
-      let        
-        arrayGetOrElse index default players = 
-        case (Array.get index players) of
-          Just v -> v
-          Nothing-> default
-        v = (arrayGetOrElse index default players)
-  in  
-    whoSend v player
-  in
-    (renderPlayerName 0 "_" players playerName) 
-    ++ " & " 
-    ++ (renderPlayerName 1 " (waiting for other to join)" players playerName)
-
-
 {-|
   senderAndReceiverEquals check sender and reciver
 -}
 
-whoSend sender receiver = 
+senderAndReceiverEquals sender receiver = 
   case (sender == receiver) of
     True -> "You"
-    False -> sender              
+    False -> sender
