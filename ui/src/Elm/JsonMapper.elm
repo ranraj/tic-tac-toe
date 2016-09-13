@@ -9,19 +9,18 @@ type alias PlaySymbol = {
   messageType : String  
 }
 
-
 type alias StoredModel = {
-  playerName : (String,Bool)
-  ,gameCode : String
-  ,lastMove : Position
-  ,isConnected : Bool
-  ,playerMode : PlayerMode  
-  ,cells : List StoredCell
+  playerName : String,
+  gameCode : String,
+  lastMove : Position,
+  isConnected : Bool,
+  playerMode : PlayerMode,  
+  cells : List StoredCell
 }
 
 type alias StoredCell = {
-  position : Position
-  ,player : Player
+  position : Position,
+  player : Player
 }
 
 playSymbolDecoder : Decoder PlaySymbol
@@ -62,17 +61,14 @@ decodeGameCode = at ["code"] Json.Decode.string
 -- Local storage Parsers
 
 --Encode
-encodeJson model getCells= 
-  let
-    playerNameTupleEncode name = Array.fromList [ fst name |> Json.Encode.string  , snd name |> Json.Encode.bool ] |> Json.Encode.array
-  in
+encodeJson model cells =   
     Json.Encode.object    
-      [ ("playerName", playerNameTupleEncode model.playerName)    
+      [ ("playerName", Json.Encode.string model.playerName)    
       , ("gameCode", Json.Encode.string model.gameCode)    
       , ("lastMove", postionTupleEncode model.lastMove)
       , ("isConnected", Json.Encode.bool model.isConnected)
       , ("playerMode",encodePlayerMode model.playerMode)    
-      , ("cells",getCells model |> encodeCells )
+      , ("cells",cells |> encodeCells )
       ]  
 
 encodePlayerMode : PlayerMode -> Json.Encode.Value
@@ -114,10 +110,10 @@ modelDecoder =
         ("position"   := positionTupleDecoder)        
         ("player" := playerDecoder) 
     cellsDecoder = Json.Decode.list cellDecoder        
-    decodePlayerName = Json.Decode.tuple2 (,) Json.Decode.string Json.Decode.bool
+    
   in
     Json.Decode.object6 StoredModel        
-    ("playerName"   := decodePlayerName)        
+    ("playerName"   := Json.Decode.string)        
     ("gameCode" := Json.Decode.string)        
     ("lastMove"   := positionTupleDecoder)        
     ("isConnected" := Json.Decode.bool)

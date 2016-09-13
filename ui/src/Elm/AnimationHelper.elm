@@ -68,7 +68,7 @@ menuStyles =
   This function being called in the Animate Msg type
 -}
 
-executeTileAnimation : Time -> List Cell -> List Cell
+executeTileAnimation : Time -> Cells -> Cells
 executeTileAnimation time cells = 
   let
     cellMap time cell = {cell | animation = Style.tick time cell.animation}
@@ -95,19 +95,3 @@ applyTileAnimationProperties animation =
     |> (\act -> Style.on animation act)            
 
 
-{- Board tiles WidgetStyle used in inital board construction -}
-
-initialWidgetStyle =
-    Style.init
-        [ Display InlineBlock
-        , Rotate 0.0 Turn
-        , RotateX 0.0 Turn
-        , RotateY 0.0 Turn
-        , TranslateY 0.0 Px
-        , TranslateX 0.0 Px
-        , Rotate 0.0 Turn
-        , Opacity 1
-        , BackgroundColor (rgba 58 40 69 1.0)
-        , Color (rgba 255 255 255 1.0)
-        , Scale 1.0                
-        ]
