@@ -33,6 +33,7 @@ type BoardUpdateResponse = Success Cells | Failure String
   It validates the Invalid move and fetching game result in every play.  
 -}
 
+playGameLocal : Position -> Model -> (Model, Cmd Msg)
 playGameLocal position model = 
   let
     plotPlayerCellOnBoard player position cells =  
