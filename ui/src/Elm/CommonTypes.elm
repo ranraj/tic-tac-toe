@@ -66,7 +66,8 @@ type alias Cell = {
 
 type alias Position = (Int,Int)
 
--- Static Data --           
+-- Static Data --   
+winCellSequence : List (List Position)        
 winCellSequence = [
   [(0,0),(0,1),(0,2)]
   ,[(0,0),(1,0),(2,0)]
@@ -78,6 +79,7 @@ winCellSequence = [
   ,[(0,2),(1,1),(2,0)]
   ] 
 
+defaultCells : List Cell
 defaultCells = [
    Cell (0,0) NoPlayer initialWidgetStyle
   ,Cell (0,1) NoPlayer initialWidgetStyle

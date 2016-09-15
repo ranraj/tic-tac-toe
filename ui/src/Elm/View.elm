@@ -72,26 +72,24 @@ toolBox { board, lastMove, playerMode, connectionStatus, gameCode ,menuFlag } =
     div 
       [] 
       [ 
-        div 
-          [] 
-          [ button 
-            [Html.Attributes.class "btn-menu",onClick (MenuAction menuFlag)]
-            [text "Menu"]
-          ]
-          ,div 
-            [Html.Attributes.class "tool-box"]
-            [
-              button 
-                [Html.Attributes.class "btn-green",onClick Reset] 
-                [text (playModeToMessage playerMode connectionStatus)]  
-              ,div 
-                [ Html.Attributes.style (fst gameStatus) ] 
-                [ 
-                  span 
-                    [Html.Attributes.class "notification"] 
-                    [text (snd gameStatus)]
-                ]                  
-            ] 
+        div [] 
+            [ button 
+              [Html.Attributes.class "btn-menu",onClick (MenuAction menuFlag)]
+              [text "Menu"]
+            ]
+          ,div  [Html.Attributes.class "tool-box"]
+                [
+                  button 
+                    [Html.Attributes.class "btn-green",onClick Reset] 
+                    [text (playModeToMessage playerMode connectionStatus)]  
+                  ,div 
+                    [ Html.Attributes.style (fst gameStatus) ] 
+                    [ 
+                      span 
+                        [Html.Attributes.class "notification"] 
+                        [text (snd gameStatus)]
+                    ]                  
+                ] 
       ]
       
 
@@ -106,16 +104,15 @@ gameMenu model =
     gameMenuBody = div [ Html.Attributes.class "setting-box" ] [
         div [Html.Attributes.style [ ("padding","5px") ]] 
             [ 
-              span 
-                [] 
-                [text " 2-Player "]
+              span [] 
+                   [text " 2-Player "]
               ,button 
-                [Html.Attributes.class "btn-blue",onClick PlayerModeToggle] 
-                [text (if model.playerMode == SinglePlayer then "Standalone" else "Remote")]          
+                  [Html.Attributes.class "btn-blue",onClick PlayerModeToggle] 
+                  [text (if model.playerMode == SinglePlayer then "Standalone" else "Remote")]          
              ]         
              ,div 
-               [Html.Attributes.style [("display",multiPlayerToolBoxVisible)]] 
-               [ div []
+                [Html.Attributes.style [("display",multiPlayerToolBoxVisible)]] 
+                [ div []
                   [ br [] []
                     ,input 
                       [ placeholder "Player Name"
@@ -147,16 +144,18 @@ gameMenu model =
               ,div 
                 [Html.Attributes.style [("display",if (Array.length model.players > 0) then "block" else "none")]] 
                 [         
-                 span [] [text "Players : " ]         
-                 ,span [] [text (Api.getPlayerJoiningStatus model.players model.playerName) ]
+                 span [] 
+                      [text "Players : " ]         
+                 ,span [] 
+                       [text (Api.getPlayerJoiningStatus model.players model.playerName) ]
                  ,br [][]
                  ,span []
-                   [
-                     text ("Symbol : " ++ case model.currentPlayer of
-                                  NoPlayer -> "_"
-                                  PlayerX -> "X"
-                                  PlayerO -> "O") 
-                   ]
+                       [
+                         text ("Symbol : " ++ case model.currentPlayer of
+                                      NoPlayer -> "_"
+                                      PlayerX -> "X"
+                                      PlayerO -> "O") 
+                       ]
                  ]
               ,div [][
                 label []

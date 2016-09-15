@@ -3,8 +3,6 @@ module RenderHelperTests exposing (..)
 import Test exposing (..)
 import Expect
 import String
-import CommonTypes
-import JsonMapper
 import RenderHelper
 import Window
 
@@ -46,6 +44,4 @@ tileSizeLandscape = test "tileSizeLandscape" <|
 boxAlignStylePortrait = test "boxAlignStylePortrait" <| 
     \() -> Expect.equal "none" (Window.Size 200 700 |> RenderHelper.boxAlignStyle) 
 boxAlignStyleLandscape = test "boxAlignStyleLandscape" <| 
-    \() -> Expect.equal "left" (Window.Size 700 200 |> RenderHelper.boxAlignStyle)    
-
-    
+    \() -> Expect.equal "left" (Window.Size 700 200 |> RenderHelper.boxAlignStyle)  
