@@ -14,7 +14,7 @@ import CommonTypes exposing (..)
 import JsonMapper
 import AppConfig
 
-socketListener model receiveMessageAction defaultSubscriptions= WebSocket.listen (AppConfig.wSocketApiUrl model.playerName model.gameCode) receiveMessageAction :: defaultSubscriptions
+socketListener model receiveMessageAction = WebSocket.listen (AppConfig.wSocketApiUrl model.playerName model.gameCode) receiveMessageAction
 
 {-| sendMessage api involves in the Remote play model
   It publish the current play position to other player.

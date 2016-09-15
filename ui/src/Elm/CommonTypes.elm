@@ -4,7 +4,7 @@ module CommonTypes exposing (..)
   Common Application Types and static data grouped in one place.
   It is across accross all the modules.
 -}
-
+import Array
 import Style
 import Http
 import Window exposing (Size)
@@ -17,9 +17,38 @@ import Color exposing (rgb, rgba,white)
 import Time exposing (Time, second)
 import Ease
 
-{-| Msg is Action type 
-  All the game event handled as Msg
+{-| Msg is type of Action which identified as the game events
 -}
+
+type Msg =  Play Position  | Reset 
+  | Resize Size  | Animate Time 
+  | FetchSucceed String | FetchFail Http.Error | SendMessage  | ReceiveMessage String   
+  | InputMessage String  | InputPlayerName String | InputGameCode String    
+  | MenuAction Bool | ConnectOrDisconnect | PlayerModeToggle | CreateGameEvent | JoinApply
+
+{-| Model is application status.
+  Which holds reference to other types like Board, Player And PlayerMode as properties  
+-}
+type alias Model = {        
+   board : Board
+  ,nextPlayer : Player
+  ,playerMode : PlayerMode  
+  ,playerName : String
+  ,lastMove : Position
+  ,status : Status               
+  ,connectionStatus : Bool    
+  ,isConnected : Bool
+  ,gameCode : String  
+  ,players : Array.Array String  
+  ,currentPlayer : Player
+  ,inputMessage : String  
+  ,messages : List String    
+  ,menuStyle : Style.Animation
+  ,menuFlag : Bool      
+  ,screenSize : Size
+  }
+
+type Status = LastMove String | Default String | NotValidMove String | GameResult String | Error String
 
 type Board = EmptyBoard Cells String | PlayBoard Cells | WinBoard Cells String (List Position) | TieBoard Cells String | ErrorBoard Cells String
 

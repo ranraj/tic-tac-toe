@@ -26,7 +26,6 @@ import AnimationHelper exposing (..)
 import SocketHandler
 
 type BoardUpdateResponse = Success Cells | Failure String
-type Status = LastMove String | Default String | NotValidMove String | GameResult String | Error String
 
 {-
   playGameLocal function is the core function in TicTacToe Api.
@@ -184,6 +183,12 @@ getWinnerBoardSequence board =
       _ -> [] 
 
 -- Subscriptions
+{-| getSubscribtions return the list of Subscriptions in application
+1) Window.resizes Subscriptions
+2) AnimationFrame Subscriptions
+3) socketSubscriptions
+   The socket Subscriptions will start listern to the websocket when isConnected made as true.
+-}
 
 getSubscribtions model receiveMessageAction reSizeAction animateAction = 
   let
@@ -191,7 +196,7 @@ getSubscribtions model receiveMessageAction reSizeAction animateAction =
       , AnimationFrame.times animateAction 
     ]
     socketSubscriptions = 
-      SocketHandler.socketListener model receiveMessageAction defaultSubscriptions
+      SocketHandler.socketListener model receiveMessageAction :: defaultSubscriptions
   in
     if (model.isConnected) then (socketSubscriptions) else (defaultSubscriptions)  
 
