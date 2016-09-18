@@ -1,18 +1,29 @@
 # Tic-tac-toe
-Single Page App (TicTacToe) Game. 
+Single Page [TicTacToe!](https://en.wikipedia.org/wiki/Tic-tac-toe) Game App. 
 
-## What is it?
-This project uses functional reactive programing (Elm-lang) and websocket (Scala with Akka) to create a two-player matrix TicTacToe game. The game was developed to try Elm-lang in light weight gaming app.
+## Overview
+This project uses functional reactive programing (Elm-lang) and websocket (Scala with Akka) to create a two-player TicTacToe game. The game was developed to try Elm-lang in light weight gaming app.
 
 ####Features:
 * Multiplayer TicTacToe
-* Local and Remote play option
-
+ * Local 
+ * Remote play option
 
 ## Tech stack:
-* Language : Elm-lang , Scala
+* Elm-lang 
+    There are many elm packages that has been used to make this project.
+      * core
+      * html
+      * svg
+      * elm-style-animation
+      * http
+      * websocket
+    There is local storage involved to save the game settings.
+      * elm port
 
-## Project
+* Scala
+
+## Build Instructions
 This project is consist of service and ui modules.
   Serice project is scala module with SBT build.
          use 
@@ -22,10 +33,12 @@ This project is consist of service and ui modules.
   UI project is Elm module
         use
         ```
-        elm-make
+        elm-make Todo.elm --output elm.js
         ```
-
+        run  
+        ```
+        index.html
+        ```
   
-## Reference 
-  
+## Other reference links
   Elm - [Installation guidence](http://elm-lang.org/install)
