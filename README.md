@@ -59,20 +59,19 @@ This project uses functional reactive programing (Elm-lang) and websocket (Scala
 ## Build Instructions
 This project is consist of service and ui modules.
 
-  Service project is a scala module with SBT build.
-         use 
-         ```
-         sbt run
-         ```
-  UI project is Elm module
-        use
-        ```
-        elm-make Todo.elm --output elm.js
-        ```
-        run  
-        ```
-        index.html
-        ```
+**Service** project is a scala module with SBT build.
+  
+Run the following command from the root of service module:
+         
+```sbt run```     
+         
+**UI** project is Elm module
+  
+Run the following command from the root of ui module:
+        
+```elm-make Elm/Tictactoe.elm --output Web/tictactoe.js ```
+        
+Open the index.html form the ui/Web folder
 
 Please find more details on this section from the respective modules.
   
