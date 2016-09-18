@@ -6,11 +6,12 @@ This project uses functional reactive programing (Elm-lang) and websocket (Scala
 
 ####Features:
 * Multiplayer TicTacToe
- * Local 
- * Remote play option
+ * Local play
+ * Remote play
 
 ## Tech stack:
 * Elm-lang 
+
     There are many elm packages that has been used to make this project.
       * core
       * html
@@ -18,14 +19,47 @@ This project uses functional reactive programing (Elm-lang) and websocket (Scala
       * elm-style-animation
       * http
       * websocket
-    There is local storage involved to save the game settings.
+      
+    There is js local storage api involved to save the game settings.
       * elm port
 
 * Scala
 
+    This module serve APIs to create game and exchange the game play information.
+     *  Akka framework 
+    
+## Api details
+
+* Create game 
+  Url - ```http://{host}:{port}/game/code/request/<player-name> ```
+
+  Type : Http Api
+  
+  Method - Get
+  
+  Parameters - [ player-name : String ]
+  
+  
+  Response - ```{ gameCode : <game-code> }```
+
+* Remote Play 
+  Url - ```ws://" {host}:{port}/game/join?name=<player-name>&id=<game-code>```
+
+  Type - Websocket Api
+  
+  Paramter - [player-name : String , game-code : String]
+  
+  Response - 
+    Response would push event from the sever. Socket client has to listen to get message from server.
+    
+    * Messages are simply two types
+        * Even Message - Join / Left 
+        * Pay Message - Play event Possition
+        
 ## Build Instructions
 This project is consist of service and ui modules.
-  Serice project is scala module with SBT build.
+
+  Service project is a scala module with SBT build.
          use 
          ```
          sbt run
@@ -39,6 +73,8 @@ This project is consist of service and ui modules.
         ```
         index.html
         ```
+
+Please find more details on this section from the respective modules.
   
 ## Other reference links
   Elm - [Installation guidence](http://elm-lang.org/install)
