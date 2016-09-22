@@ -3,17 +3,24 @@ package com.ran.tictactoe
 import akka.actor._
 import akka.stream.OverflowStrategy
 import akka.stream.scaladsl._
-import MessageType._
+
 sealed trait Player
 final case object PlayerX extends  Player
 final case object PlayerO extends Player
 final case object NoPlayer extends Player
 
+sealed trait AppMessage
+case class GameMessage(sender: String,gameId:String, message: String) extends AppMessage
+case class Joined(member: PlayerDetails,gameId:String , allMembers: Seq[String] ) extends AppMessage
+case class Left(member: PlayerDetails,gameId:String, allMembers: Seq[String]) extends AppMessage
+case class ErrorMessage(sender: String,gameId:String, message: String) extends AppMessage
+
 case class PlayerDetails(name:String,playerSymbol : Player)
 trait GameMessenger {
-  def gameFlow(sender: String, gameId: String): Flow[String, Message, Any]
+  def gameFlow(sender: String, gameId: String): Flow[String, AppMessage, Any]
   def pushMessage(message: GameMessage): Unit
 }
+
 
 object GameMessenger {
   def create(system: ActorSystem): GameMessenger = {
@@ -61,10 +68,10 @@ object GameMessenger {
             // clean up dead subscribers, but should have been removed when `ParticipantLeft`
             subscribers = subscribers.filterNot(_._2 == sub)
         }
-        def dispatch(msg: Message, gameId: String): Unit = {
+        def dispatch(msg: AppMessage, gameId: String): Unit = {
           getSubscribers(gameId).foreach(_._2 ! msg)
         }
-        def errorDispatch(msg: Message, subscriber: ActorRef): Unit = {
+        def errorDispatch(msg: AppMessage, subscriber: ActorRef): Unit = {
           subscriber ! msg
         }
         def members(gameId: String) = {
