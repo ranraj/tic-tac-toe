@@ -7,7 +7,7 @@ module SocketHandler exposing (..)
 import String
 import Array
 import Json.Encode
-import Json.Decode exposing (tuple2,decodeString, int)
+import Json.Decode exposing (list,decodeString, int)
 import WebSocket
 
 import CommonTypes exposing (..)
@@ -16,13 +16,13 @@ import AppConfig
 
 socketListener model receiveMessageAction = WebSocket.listen (AppConfig.wSocketApiUrl model.playerName model.gameCode) receiveMessageAction
 
-{-| sendMessage api involves in the Remote play model
+{- sendMessage api involves in the Remote play model
   It publish the current play position to other player.
 -}
 
 sendMessage playerName gameCode msg = WebSocket.send (AppConfig.wSocketApiUrl playerName gameCode) msg  
 
-{-| 
+{- 
   processIncomingMessage helps to manage socket incoming messages
   If message received it undergoes for further process.
     That should be catched in the any of the defined message category.
@@ -30,7 +30,7 @@ sendMessage playerName gameCode msg = WebSocket.send (AppConfig.wSocketApiUrl pl
     2 ) Event Message - It has only Join and Left message. 
 -}
 
-processIncomingMessage model message playGameLocal getPlayerJoiningStatus = 
+{-processIncomingMessage model message playGameLocal getPlayerJoiningStatus = 
   let      
     playerMessageToTypeParser memberMessage playerName currentPlayer= 
       if (String.contains playerName memberMessage.member.name) 
@@ -48,10 +48,10 @@ processIncomingMessage model message playGameLocal getPlayerJoiningStatus =
          then False 
          else False  
 
-    parseGamePlayMessage = decodeString JsonMapper.jsonPlayMessageDecoder message      
+    {-parseGamePlayMessage = decodeString JsonMapper.jsonPlayMessageDecoder message    -} 
 
-    handleGameEventMessage = 
-      case (decodeString JsonMapper.jsonEventMessageDecoder message) of
+    handleGameEventMessage = model ! []
+      {-case (decodeString JsonMapper.jsonEventMessageDecoder message) of
         Result.Err eventMessageError -> { model | messages = toString eventMessageError :: model.messages} ! []
         Result.Ok eventMessageValue -> 
           if (Array.length eventMessageValue.allMembers <= 1) 
@@ -71,12 +71,12 @@ processIncomingMessage model message playGameLocal getPlayerJoiningStatus =
                ,connectionStatus = isOnline eventMessageValue
                ,players = eventMessageValue.allMembers
               } ! []    
-
-    decodePostionFromSting position = decodeString (tuple2 (,) Json.Decode.int Json.Decode.int) position
+        -}      
+    decodePostionFromSting position = decodeString (list int) position
 
     {- If possition received in message then parse position string to Position type -}          
 
-    handlePositionMessage playMessageValue =         
+    handlePositionMessage playMessageValue = model ! []        
               case Array.get 1 (Array.fromList (String.split "=" playMessageValue.message)) of
                 Just positionString ->  
                   case (decodePostionFromSting positionString) of
@@ -115,12 +115,14 @@ processIncomingMessage model message playGameLocal getPlayerJoiningStatus =
               {- If the received message does not catched in any of the category then, just log it in the messages
               -}
               { model | messages = toString playMessageValue :: model.messages} ! []
-
-{-|
+-}
+{-
   senderAndReceiverEquals check sender and reciver
 -}
 
+{-
 senderAndReceiverEquals sender receiver = 
   case (sender == receiver) of
     True -> "You"
     False -> sender
+-}

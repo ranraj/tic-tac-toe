@@ -5,15 +5,13 @@ module Api exposing (..)
 -}
 
 import AnimationFrame
-import Style
-import Style.Properties exposing (..)
-import Style.Spring.Presets
+import Animation
 import String
 import Array
 import Http
 import Task
 import Json.Encode
-import Json.Decode exposing (Decoder,tuple2,decodeString, int, string, object1,object2,object4, (:=),array,at)
+import Json.Decode exposing (Decoder,decodeString, int, string,array,at)
 import Window exposing (Size)
 
 -- Custom modules
@@ -24,7 +22,7 @@ import JsonMapper exposing (..)
 import RenderHelper exposing (..)
 import AnimationHelper exposing (..)
 import SocketHandler
-
+import Tuple
 type BoardUpdateResponse = Success Cells | Failure String
 
 {-
@@ -36,6 +34,11 @@ type BoardUpdateResponse = Success Cells | Failure String
 playGameLocal : Position -> Model -> (Model, Cmd Msg)
 playGameLocal position model = 
   let
+    getPlayerAtPosition : Position -> Cells -> Player
+    getPlayerAtPosition position cells =     
+      case (List.head (List.filter (\currentCell -> currentCell.position == position) cells)) of
+        Just val -> val.player
+        Nothing -> NoPlayer
     plotPlayerCellOnBoard player position cells =  
       case (getPlayerAtPosition position cells) of    
         NoPlayer ->         
@@ -45,7 +48,7 @@ playGameLocal position model =
                           True -> 
                             { cell |
                              player = player 
-                             ,animation = AnimationHelper.applyTileAnimationProperties cell.animation 
+                             ,animation = AnimationHelper.applyTileAnimationProperties cell.animation
                             }
                           False -> cell) 
                      cells)    
@@ -76,7 +79,7 @@ playGameLocal position model =
           { model  |
            status = NotValidMove ("Game Over as match result :" ++ msg) } ! []
 
-{-|
+{-
   playGameRemote plays the online game.
     It validates and update the Board in model
 -}
@@ -95,20 +98,8 @@ playGameRemote  position model=
   else   
     { model | board = ErrorBoard defaultCells "You have not joined the game"} ! []
 
-{-| getPlayerAtPosition returns Player type.
-  It find the cell with position and returns the Player from the cell.
--}
 
-getPlayerAtPosition : Position -> Cells -> Player
-getPlayerAtPosition position cells = 
-  let 
-    cell = List.head (List.filter (\currentCell -> currentCell.position == position) cells)
-  in     
-    case cell of
-      Just val -> val.player
-      Nothing -> NoPlayer
-
-{-| fetchGameResult takes cells as input paramater and returns Board type as Game Result.
+{- fetchGameResult takes cells as input paramater and returns Board type as Game Result.
   Boards has added with message about the result, that can be used to render status in UI.
 -}
 
@@ -143,7 +134,7 @@ fetchGameResult cells =
         Nothing -> case (isFinishedBoard cells) of
           True -> TieBoard cells "Game Tie"
           False -> PlayBoard cells      
-{-|
+{-
   fetchStatusFromBoard parse Game board to relevent Status type.
     This Stauts can be used to render status as message
   toHtmlMessage parse Status to Html Message
@@ -172,7 +163,7 @@ renderStatus  board position =
   in
     fetchStatusFromBoard |> toHtmlMessage
 
-{-|
+{-
   getWinnerBoardSequence return List of Position
   This funtion used to highlight winner sequence tiles
 -}
@@ -184,17 +175,25 @@ getWinnerBoardSequence board =
       _ -> [] 
 
 -- Subscriptions
-{-| getSubscribtions return the list of Subscriptions in application
+{- getSubscribtions return the list of Subscriptions in application
 1) Window.resizes Subscriptions
 2) AnimationFrame Subscriptions
 3) socketSubscriptions
    The socket Subscriptions will start listern to the websocket when isConnected made as true.
 -}
+getCellsStyle : Model -> List Animation.State
+getCellsStyle model =
+  case model.board  of 
+    EmptyBoard cells msg-> List.map (\cell -> cell.animation) cells
+    PlayBoard cells -> List.map (\cell -> cell.animation) cells
+    WinBoard cells msg winSequence -> List.map (\cell -> cell.animation) cells
+    TieBoard cells msg -> List.map (\cell -> cell.animation) cells
+    ErrorBoard cells msg ->  List.map (\cell -> cell.animation) cells
 
-getSubscribtions model receiveMessageAction reSizeAction animateAction = 
+getSubscribtions model receiveMessageAction reSizeAction = 
   let
     defaultSubscriptions = [ Window.resizes reSizeAction 
-      , AnimationFrame.times animateAction 
+      ,Animation.subscription Animate <| (model.menuStyle :: (getCellsStyle model))
     ]
     socketSubscriptions = 
       SocketHandler.socketListener model receiveMessageAction :: defaultSubscriptions
@@ -203,7 +202,7 @@ getSubscribtions model receiveMessageAction reSizeAction animateAction =
 
 -- Http and WebSocket Service utils 
 
-{-|
+{-
 joinGame set the gameCode to the model and make conntcted status true.
 Once the connection status is set then immediately Socket Subscriptions will start listen.
 It validates the name, gameCode before set the player to join
@@ -225,23 +224,23 @@ joinGame model code board =
           { model | 
             isConnected = True, board = board , gameCode = code 
           }
-{-|
+{-
   createGameCode call http api and get the game code
   API uri : http://{host}:{port}/game/code/request/{player-name}  
 -}
 
-createGameCode model a b =
-  let  
+createGameCode model a b = model ! []
+{-  let  
     url = AppConfig.gameCodeApiUrl model.playerName
   in 
     if (String.isEmpty model.playerName) then 
       { model | board = ErrorBoard defaultCells "Name Must not be Empty"} ![]
     else 
       model ! [Task.perform a b (Http.get decodeGameCode url)]
-
+-}
  
 
-{-| playModeToMessage takes GameMode and connection status and it convert to render as String
+{- playModeToMessage takes GameMode and connection status and it convert to render as String
 -}
 
 playModeToMessage gameMode connectionStatus= 
@@ -251,17 +250,19 @@ playModeToMessage gameMode connectionStatus=
       True -> "New"
       False -> "Join"
 
-{-| lastMoveToMessage takes lastMovePostion as paramter and it convert to render as String
+{- lastMoveToMessage takes lastMovePostion as paramter and it convert to render as String
 -}
 
-lastMoveToMessage lastMovePostion= ("Position = [" ++ toString (fst lastMovePostion) ++ "," ++ toString (snd lastMovePostion) ++"]")
+lastMoveToMessage lastMovePostion= 
+  ("Position = [" ++ toString (Tuple.first lastMovePostion) 
+    ++ "," ++ toString (Tuple.second lastMovePostion) ++"]")
 
-{-|
+{-
   getPlayerJoiningStatus check sender and reciver and render it for status
 -}
 
-getPlayerJoiningStatus players playerName = 
-  let    
+getPlayerJoiningStatus players playerName = "Fix Me"
+{-  let    
     renderPlayerName index default players player = 
       let        
         arrayGetOrElse index default players = 
@@ -275,8 +276,8 @@ getPlayerJoiningStatus players playerName =
     (renderPlayerName 0 "_" players playerName) 
     ++ " & " 
     ++ (renderPlayerName 1 " (waiting for other to join)" players playerName)
-
-{-|
+-}
+{-
   getCells takes board as parameter from the model and exctract the cells from it.
 -}
 
@@ -288,17 +289,17 @@ getCells { board } =
     TieBoard cells msg ->  cells
     WinBoard cells msg sequence ->  cells
 
-{-| encodeJson takes model and convert it as JSON
--}
+{- encodeJson takes model and convert it as JSON
+
 
 encodeJsonMessage model = encodeJson model <| getCells model
-
-{-| decodeJsonToModel Convert json to Model  
+-}
+{- decodeJsonToModel Convert json to Model  
 This being used to decode the stored JSON Model 
 -}
 
-decodeJsonToModel modelJson defaultModel =  
-  let    
+decodeJsonToModel modelJson defaultModel = defaultModel
+{-  let    
     parseJsonModelToModel defaultCells jsonModel =  
       {
       defaultCells | playerName = jsonModel.playerName
@@ -313,13 +314,14 @@ decodeJsonToModel modelJson defaultModel =
     case (decodeJson modelJson) of
       Ok jsonModel -> parseJsonModelToModel defaultModel jsonModel
       Err e -> { defaultModel | messages = toString e :: defaultModel.messages}
-
+-}
 {- messageReceiver and messageSender are act like a router
   Any validation or business logic needed , that can be included here.
 -}
 
-messageReceiver model message = 
-  SocketHandler.processIncomingMessage model message playGameLocal getPlayerJoiningStatus
+messageReceiver model message = model ! []
+{-  SocketHandler.processIncomingMessage model message playGameLocal getPlayerJoiningStatus -}
                      
-messageSender playerName gameCode msg = 
-  SocketHandler.sendMessage playerName gameCode msg  
+messageSender playerName gameCode msg = SocketHandler.sendMessage playerName gameCode msg  
+{-  
+-}

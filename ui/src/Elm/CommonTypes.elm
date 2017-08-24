@@ -5,14 +5,12 @@ module CommonTypes exposing (..)
   It is across accross all the modules.
 -}
 import Array
-import Style
+import Animation
 import Http
 import Window exposing (Size)
 import Time exposing (Time, second)
 import AnimationFrame
-import Style
-import Style.Properties exposing (..)
-import Style.Spring.Presets
+import Animation exposing (px, turn, percent)
 import Color exposing (rgb, rgba,white)
 import Time exposing (Time, second)
 import Ease
@@ -21,7 +19,7 @@ import Ease
 -}
 
 type Msg =  Play Position  | Reset 
-  | Resize Size  | Animate Time 
+  | Resize Size  | Animate Animation.Msg 
   | FetchSucceed String | FetchFail Http.Error | SendMessage  | ReceiveMessage String   
   | InputMessage String  | InputPlayerName String | InputGameCode String    
   | MenuAction Bool | ConnectOrDisconnect | PlayerModeToggle | CreateGameEvent | JoinApply
@@ -43,7 +41,7 @@ type alias Model = {
   ,currentPlayer : Player
   ,inputMessage : String  
   ,messages : List String    
-  ,menuStyle : Style.Animation
+  ,menuStyle : Animation.State
   ,menuFlag : Bool      
   ,screenSize : Size
   }
@@ -61,7 +59,7 @@ type alias Cells = List Cell
 type alias Cell = {
     position : Position,    
     player : Player,
-    animation : Style.Animation     
+    animation : Animation.State     
 }
 
 type alias Position = (Int,Int)
@@ -93,18 +91,23 @@ defaultCells = [
   ]
 
 {- Board tiles WidgetStyle used in inital board construction -}
-
 initialWidgetStyle =
-    Style.init
-        [ Display InlineBlock
-        , Rotate 0.0 Turn
-        , RotateX 0.0 Turn
-        , RotateY 0.0 Turn
-        , TranslateY 0.0 Px
-        , TranslateX 0.0 Px
-        , Rotate 0.0 Turn
-        , Opacity 1
-        , BackgroundColor (rgba 58 40 69 1.0)
-        , Color (rgba 255 255 255 1.0)
-        , Scale 1.0                
-        ]  
+    Animation.styleWith
+        (Animation.spring
+            { stiffness = 400
+            , damping = 23 }
+        )
+        [ Animation.display Animation.inlineBlock
+        , Animation.opacity 2
+        , Animation.backgroundColor (rgba 58 40 69 1.0)
+        , Animation.color (rgba 255 255 255 1.0)
+        , Animation.scale 1.0
+        , Animation.translate3d (percent 0) (percent 0) (px 0)
+        , Animation.shadow
+                { offsetX = 50
+                , offsetY = 55
+                , blur = 6
+                , size = 4                
+                , color = rgba 0 0 0 0.1
+                }
+        ]

@@ -2,7 +2,7 @@ module JsonMapper exposing (..)
 
 import Array exposing (Array)
 import Json.Encode
-import Json.Decode exposing (Decoder,tuple2,decodeString, int, string, object1,object2,object4, (:=),array,at)
+import Json.Decode exposing (..)
 import CommonTypes exposing (..)
 
 type alias PlaySymbol = {
@@ -23,18 +23,19 @@ type alias StoredCell = {
   player : Player
 }
 
-playSymbolDecoder : Decoder PlaySymbol
+{-playSymbolDecoder : Decoder PlaySymbol
 playSymbolDecoder =
-    object1 PlaySymbol ("$type" := Json.Decode.string)
-
+    map1 PlaySymbol (field "$type" string)
+-}
 type alias Member = {
   name : String
   ,playerSymbol : PlaySymbol
 }
-jsonMemberDetailsDecoder : Decoder Member
-jsonMemberDetailsDecoder =
-    object2 Member ("name" := Json.Decode.string) ("playerSymbol" := playSymbolDecoder)
 
+{-jsonMemberDetailsDecoder : Decoder Member
+jsonMemberDetailsDecoder =
+    map2 Member (field "name" string) (field "playerSymbol" playSymbolDecoder)
+-}
 type alias MessageMember =
   {
   messageType : String 
@@ -43,25 +44,25 @@ type alias MessageMember =
   ,allMembers : Array String
 }
 
-jsonEventMessageDecoder : Decoder MessageMember
+{-jsonEventMessageDecoder : Decoder MessageMember
 jsonEventMessageDecoder =
-    object4 MessageMember ("$type" := Json.Decode.string) ("member" := jsonMemberDetailsDecoder) ("gameId" := Json.Decode.string) ("allMembers" := array Json.Decode.string)
-
+    map2 MessageMember (field "$type" string) (field "member" jsonMemberDetailsDecoder) (field "gameId" string) (decodeString (array string ) "allMembers")
+-}
 type alias JsonMessageContent = {
   messageType : String
   ,sender : String
   ,gameId : String
   ,message : String
 }
-jsonPlayMessageDecoder : Decoder JsonMessageContent
-jsonPlayMessageDecoder = object4 JsonMessageContent ("$type" := Json.Decode.string) ("sender" := Json.Decode.string) ("gameId" := Json.Decode.string) ("message" := Json.Decode.string)   
-
+{-jsonPlayMessageDecoder : Decoder JsonMessageContent
+jsonPlayMessageDecoder = object4 JsonMessageContent (decodeString string "$type") (decodeString string "sender") (decodeString string "gameId") (decodeString string "message")   
+-}
 -- Http message parser
-decodeGameCode = at ["code"] Json.Decode.string
+{-decodeGameCode = at decodeString string ["code"] -}
 -- Local storage Parsers
 
 --Encode
-encodeJson model cells =   
+{-encodeJson model cells =   
     Json.Encode.object    
       [ ("playerName", Json.Encode.string model.playerName)    
       , ("gameCode", Json.Encode.string model.gameCode)    
@@ -70,13 +71,15 @@ encodeJson model cells =
       , ("playerMode",encodePlayerMode model.playerMode)    
       , ("cells",cells |> encodeCells )
       ]  
-
+-}      
+{-
 encodePlayerMode : PlayerMode -> Json.Encode.Value
 encodePlayerMode playerMode =  
   case playerMode of
     SinglePlayer  -> Json.Encode.string "SinglePlayer"
     MultiPlayer   -> Json.Encode.string "MultiPlayer"   
-
+-}    
+{-
 encodePlayer : Player -> Json.Encode.Value
 encodePlayer player =  
   case player of
@@ -95,14 +98,14 @@ encodeCells cells =
     List.map encodeCell cells |> Json.Encode.list
 
 postionTupleEncode position = Array.fromList [ fst position |> Json.Encode.int  , snd position |> Json.Encode.int ] |> Json.Encode.array
-
+-}
 --Decode
 
-decodeJson : Json.Decode.Value -> Result String StoredModel
+{-decodeJson : Json.Decode.Value -> Result String StoredModel
 decodeJson modelJson =
   Json.Decode.decodeValue modelDecoder modelJson
-
-modelDecoder : Json.Decode.Decoder StoredModel
+-}
+{-modelDecoder : Json.Decode.Decoder StoredModel
 modelDecoder =
   let
     cellDecoder =
@@ -113,14 +116,14 @@ modelDecoder =
     
   in
     Json.Decode.object6 StoredModel        
-    ("playerName"   := Json.Decode.string)        
-    ("gameCode" := Json.Decode.string)        
+    (decodeString string "playerName")        
+    (decodeString string "gameCode")        
     ("lastMove"   := positionTupleDecoder)        
     ("isConnected" := Json.Decode.bool)
     ("playerMode" := playerModeDecoder)    
     ("cells" := cellsDecoder)  
-
-playerModeDecoder : Json.Decode.Decoder PlayerMode
+-}
+{-playerModeDecoder : Json.Decode.Decoder PlayerMode
 playerModeDecoder =
   let
     decodePlyerMode playerMode =
@@ -129,9 +132,9 @@ playerModeDecoder =
         "MultiPlayer" -> Result.Ok MultiPlayer        
         _ -> Result.Err ("Not a valid PlayerMode: " ++ playerMode)
   in
-    Json.Decode.customDecoder Json.Decode.string decodePlyerMode 
-
-playerDecoder : Json.Decode.Decoder Player
+    Json.Decode.customDecoder decodeString decodePlyerMode 
+-}
+{-playerDecoder : Json.Decode.Decoder Player
 playerDecoder =
   let
     decodePlayer player =
@@ -141,6 +144,7 @@ playerDecoder =
         "NoPlayer" -> Result.Ok NoPlayer
         _ -> Result.Err ("Not a valid Player: " ++ player)
   in
-    Json.Decode.customDecoder Json.Decode.string decodePlayer     
+    Json.Decode.customDecoder decodeString decodePlayer     
 
 positionTupleDecoder = Json.Decode.tuple2 (,) Json.Decode.int Json.Decode.int
+-}

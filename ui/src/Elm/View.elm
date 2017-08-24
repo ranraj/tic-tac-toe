@@ -7,17 +7,14 @@ port module View exposing (..)
 -}
 
 import Html exposing (..)
-import Html.App as App
 import Html.Events exposing (..)
 import Html.Attributes exposing (class,style,checked,readonly,placeholder)
 import Svg exposing (Svg,g,rect,circle,line)
 import Svg.Attributes exposing (..)
 import Window exposing (Size)
-import Style
-import Style.Properties exposing (..)
-import Style.Spring.Presets
+import Animation
 import Array
-
+import Tuple
 -- Custom Module
 
 import Api exposing (..)
@@ -83,11 +80,11 @@ toolBox { board, lastMove, playerMode, connectionStatus, gameCode ,menuFlag } =
                     [Html.Attributes.class "btn-green",onClick Reset] 
                     [text (playModeToMessage playerMode connectionStatus)]  
                   ,div 
-                    [ Html.Attributes.style (fst gameStatus) ] 
+                    [ Html.Attributes.style (Tuple.first gameStatus) ] 
                     [ 
                       span 
                         [Html.Attributes.class "notification"] 
-                        [text (snd gameStatus)]
+                        [text (Tuple.second gameStatus)]
                     ]                  
                 ] 
       ]
@@ -181,9 +178,12 @@ gameMenu model =
              -- ,div [] (List.map (\msg -> div [] [ text msg ]) messages)-}         
               ]
       ]
-    in
+  in
       div
-       [Html.Attributes.class "menu-box",  Html.Attributes.style (Style.render model.menuStyle)]
+       ((Animation.render model.menuStyle) 
+       ++ [Html.Attributes.class "menu-box"
+       {-,  Html.Attributes.style -}
+       ])
        [ button [Html.Attributes.class "btn-red",onClick (MenuAction model.menuFlag)] [text "Close"]
        ,h1 [] [ text "Tic-Tac-Toe" ]
        ,gameMenuBody
@@ -202,8 +202,8 @@ drawBoard board screenSize =
         w = screenSize.width             
         size = tileSize screenSize
         times = size // 100
-        xVal = ((fst position) * size)
-        yVal = ((snd position) * size)   
+        xVal = ((Tuple.first position) * size)
+        yVal = ((Tuple.second position) * size)   
         circleSize  = (size // 2)
         crossSize = (size // 4)
         symbolWidth = (size // 6)
@@ -218,8 +218,9 @@ drawBoard board screenSize =
             g [] 
               [
                 rect 
-                  [ Svg.Attributes.class "cell"
-                   ,Html.Attributes.style (Style.render animation)
+                  ((Animation.render animation)
+                    ++ [ Svg.Attributes.class "cell"
+                   {-,Html.Attributes.style -}
                    ,onClick (Play (position))
                    ,fill boardBgColor
                    ,stroke symbolColor
@@ -227,75 +228,80 @@ drawBoard board screenSize =
                    ,y (toString yVal)
                    ,width (toString size)
                    ,height (toString size)
-                  ] []                      
+                  ]) []                      
+                ,circle             
+                  ((Animation.render animation)
+                      ++  [{-Html.Attributes.style-}
+                          onClick (Play (position))
+                          , fill symbolColor
+                          , cx (toString ((xVal + circleSize) + times))
+                          , cy (toString ((yVal + circleSize) + times))
+                          , r (toString ((symbolWidth * 2) + times)) 
+                    ]) []
                 ,circle 
-                  [ 
-                    Html.Attributes.style (Style.render animation)
-                    ,onClick (Play (position))
-                    , fill symbolColor
-                    , cx (toString ((xVal + circleSize) + times))
-                    , cy (toString ((yVal + circleSize) + times))
-                    , r (toString ((symbolWidth * 2) + times)) 
-                  ] []
-                ,circle 
-                  [
-                   Html.Attributes.style (Style.render animation)
-                   ,onClick (Play (position))
+                  ((Animation.render animation)
+                      ++ [
+                   {-Html.Attributes.style (Animation.render animation),-}
+                   onClick (Play (position))
                    , fill boardBgColor
                    , cx (toString ((xVal + circleSize) + times))
                    , cy (toString ((yVal + circleSize) + times))
                    , r (toString (symbolWidth + times)) 
-                  ] []
+                  ]) []
              ]
           PlayerX -> 
              g [] 
               [
               rect 
-                [
+                ((Animation.render animation)
+                      ++ [
                   Svg.Attributes.class "cell"
-                  ,Html.Attributes.style (Style.render animation)
+                  {-,Html.Attributes.style (Animation.render animation)-}
                   ,onClick (Play (position))
                   , fill boardBgColor
                   , stroke symbolColor
-                  , x (toString ((fst position) * size))
-                  , y (toString ((snd position) * size))
+                  , x (toString ((Tuple.first position) * size))
+                  , y (toString ((Tuple.second position) * size))
                   , width (toString size)
                   , height (toString size)
-                ] []                
+                ]) []                
              ,line 
-               [
-                 Html.Attributes.style (Style.render animation)
-                 ,onClick (Play (position))
+               ((Animation.render animation)
+                      ++ [
+                 {-Html.Attributes.style (Animation.render animation)
+                 ,-}onClick (Play (position))
                  , x1 (toString (xVal + crossSize))
                  , y1 (toString (yVal + crossSize))
                  , x2 (toString (xVal + (size - crossSize)))
                  , y2 (toString (yVal + (size - crossSize)))
                  , stroke symbolColor,strokeWidth (toString symbolWidth)
-                ] []
+                ]) []
              ,line 
-               [
-                 Html.Attributes.style (Style.render animation)
-                 ,onClick (Play (position))
+               ((Animation.render animation)
+                      ++ [
+                 {-Html.Attributes.style (Animation.render animation)
+                 ,-}onClick (Play (position))
                  , x1 (toString (xVal + crossSize))
                  , y1 (toString (yVal + (size - crossSize )))
                  , x2 (toString (xVal + (size - crossSize)))
                  , y2 (toString (yVal + crossSize))
                  , stroke symbolColor,strokeWidth (toString symbolWidth)
-               ] []
+               ]) []
             ]
           NoPlayer ->
             rect 
-              [
+              ((Animation.render animation)
+                      ++ [
                 Svg.Attributes.class "cell"
-                ,Html.Attributes.style (Style.render animation)
+                {-,Html.Attributes.style (Animation.render animation)-}
                 ,onClick (Play (position))
                 ,fill symbolColor
                 ,stroke boardBgColor
-                ,x (toString ((fst position) * size))
-                ,y (toString ((snd position) * size))
+                ,x (toString ((Tuple.first position) * size))
+                ,y (toString ((Tuple.second position) * size))
                 ,width (toString size)
                 ,height (toString size)
-              ] []   
+              ]) []   
 
   in        
   case board of  

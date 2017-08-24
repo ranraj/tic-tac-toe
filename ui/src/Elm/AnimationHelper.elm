@@ -8,9 +8,8 @@ module AnimationHelper exposing (..)
 import Svg exposing (..)
 import Svg.Attributes exposing (..)
 import AnimationFrame
-import Style
-import Style.Properties exposing (..)
-import Style.Spring.Presets
+import Animation
+import Animation exposing (px, turn, percent)
 import Color exposing (rgb, rgba,white)
 import Time exposing (Time, second)
 import Ease
@@ -25,25 +24,24 @@ import CommonTypes exposing (..)
   and Menu will be opend or closed based on the flag value
 -}
 
-menuAnimation model flag = 
+menuAnimation model flag =
   let
-    menuRender s = 
+    menuRender status = 
       ( { model
-          | menuStyle =
-              Style.animate
-              |> Style.duration (second / 5)
-              |> Style.easing (\x -> x)
-              |> Style.to s
-              |> Style.on model.menuStyle
+          | menuStyle = 
+            (Animation.interrupt
+               [ Animation.to status]
+                model.menuStyle)
               ,menuFlag = not flag    
         }
         , Cmd.none
       )
   in
-  if(flag) then                                      
-    menuRender menuStyles.closed
-  else            
-    menuRender menuStyles.open
+    if(flag) then                                   
+      menuRender menuStyles.closed
+    else             
+      menuRender menuStyles.open
+    
 
 {-
   menuStyle is object notation wish holds the menu animation open and close properties
@@ -51,14 +49,14 @@ menuAnimation model flag =
 
 menuStyles =
     { open =
-        [ Left 0.0 Px
-        , Opacity 1.0
-        , Color (white)
+        [ Animation.left (px 0.0)
+        , Animation.opacity 1.0
+        , Animation.color Color.white
         ]
     , closed =
-        [ Left -350.0 Px
-        , Opacity 0.0
-        , Color (white)
+        [ Animation.left (px -350.0)
+        , Animation.opacity 0.0
+        , Animation.color (Color.white)
         ]
     }
 
@@ -68,30 +66,35 @@ menuStyles =
   This function being called in the Animate Msg type
 -}
 
-executeTileAnimation : Time -> Cells -> Cells
-executeTileAnimation time cells = 
-  let
-    cellMap time cell = {cell | animation = Style.tick time cell.animation}
-  in
-    List.map (cellMap time) cells
-
+executeTileAnimation : Animation.Msg -> Cells -> Cells
+executeTileAnimation msg cells = 
+    List.map (\cell -> { cell | animation = (Animation.update msg) cell.animation }) cells
 {-
   applyTileAnimationProperties is applying/setting spring effect when tiles about to play.
 -}
-
-applyTileAnimationProperties animation =            
-    Style.queue 
-    |> Style.spring Style.Spring.Presets.noWobble
-    |> Style.duration (0.1 * second)
-    |> Style.to
-        [ Scale 0.98
+applyTileAnimationProperties animation =  
+     animation |> (Animation.interrupt
+        [ Animation.to
+            [ Animation.translate (px 2) (px 2)
+            , Animation.scale 0.98
+            , Animation.shadow
+                { offsetX = 50
+                , offsetY = 55
+                , blur = 6
+                , size = 4
+                , color = rgba 0 0 0 0.1
+                }
+            ]
+        , Animation.to
+            [ Animation.translate (px 2) (px 2)
+            , Animation.scale 1.0
+            , Animation.shadow
+                { offsetX = 50
+                , offsetY = 55
+                , blur = 6
+                , size = 4                
+                , color = rgba 0 0 0 0.1
+                }
+            ]
         ]
-    |> Style.andThen
-    |> Style.spring Style.Spring.Presets.wobbly
-    |> Style.duration (0.1 * second)
-    |> Style.to
-        [ Scale 1.0
-        ]
-    |> (\act -> Style.on animation act)            
-
-
+    )

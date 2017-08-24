@@ -1,21 +1,19 @@
 port module TicTacToe exposing (..)
 
 import Html exposing (..)
-import Html.App as App
 import Html.Events exposing (..)
 import Html.Attributes exposing (class,style,checked,readonly,placeholder)
 import Svg exposing (Svg,g,rect,circle,line)
 import Svg.Attributes exposing (..)
 import Window exposing (Size)
 import Task
-import Json.Decode exposing (Decoder,tuple2,decodeString, int, string, object2, (:=),array,at)
+import Json.Decode exposing (Decoder,decodeString, int, string,array,at)
 import Http
 import Time exposing (Time, second)
 import Array
 import String
 import Json.Encode
-import Json.Decode exposing ((:=))
-import Style
+import Animation
 
 -- Custom Module
 import Api exposing (..)
@@ -44,7 +42,7 @@ model =
   currentPlayer = NoPlayer,  
   inputMessage = "",  
   messages = [],  
-  menuStyle = (Style.init menuStyles.closed),
+  menuStyle = (Animation.style menuStyles.closed),
   menuFlag = False,  
   screenSize = (Size 0 0)  
   } 
@@ -53,7 +51,7 @@ model =
   ProgramWithFlags useful when application state intracting with local storage
 -}
 
-main = App.programWithFlags{ init=init,view = view ,update = updateWithStorage,subscriptions= subscriptions }
+main = Html.programWithFlags{ init=init,view = view ,update = updateWithStorage,subscriptions= subscriptions }
 
 -- INIT
 
@@ -79,44 +77,42 @@ update msg model =
               then model ! [ Api.messageSender model.playerName model.gameCode "Game.Reset" ]
               else { model | board = EmptyBoard CommonTypes.defaultCells "New Game" } ! [ sizeTask ]
 
-    Animate time ->                 
+    Animate animationMsg ->                 
       case (model.board) of 
-        PlayBoard cells -> 
-          ({ model | 
-            board = PlayBoard ( AnimationHelper.executeTileAnimation time cells),
-            menuStyle = Style.tick time model.menuStyle
-            },
-          Cmd.none)
-
+        PlayBoard cells -> ({ model | 
+          board = PlayBoard ( AnimationHelper.executeTileAnimation animationMsg cells)
+          ,menuStyle = Animation.update animationMsg model.menuStyle
+          },
+        Cmd.none)            
         EmptyBoard cells msg -> 
           ({model | 
-            menuStyle = Style.tick time model.menuStyle
+            menuStyle = Animation.update animationMsg model.menuStyle
             },
           Cmd.none)
 
         ErrorBoard cells msg -> 
           ({model | 
-            board = ErrorBoard ( AnimationHelper.executeTileAnimation time cells) msg,
-            menuStyle = Style.tick time model.menuStyle
+            board = ErrorBoard ( AnimationHelper.executeTileAnimation animationMsg cells) msg
+            ,menuStyle = Animation.update animationMsg model.menuStyle
             },
           Cmd.none)
 
         TieBoard cells msg ->  
           ({ model  | 
-            board = TieBoard ( AnimationHelper.executeTileAnimation time cells ) msg ,
-            status = NotValidMove ("Game Over as match result :" ++ msg),
-            menuStyle = Style.tick time model.menuStyle
+            board = TieBoard ( AnimationHelper.executeTileAnimation animationMsg cells ) msg ,
+            status = NotValidMove ("Game Over as match result :" ++ msg)
+            ,menuStyle = Animation.update animationMsg model.menuStyle
             },
           Cmd.none)         
 
         WinBoard cells msg sequence ->  
           ({ model  | 
-            board = WinBoard ( AnimationHelper.executeTileAnimation time cells ) msg sequence,
-            status = NotValidMove ("Game Over as match result :" ++ msg),
-            menuStyle = Style.tick time model.menuStyle
+            board = WinBoard ( AnimationHelper.executeTileAnimation animationMsg cells ) msg sequence,
+            status = NotValidMove ("Game Over as match result :" ++ msg)
+            ,menuStyle = Animation.update animationMsg model.menuStyle
             },
           Cmd.none)
-
+       
     PlayerModeToggle -> 
       { model |
         playerMode = 
@@ -178,17 +174,17 @@ updateWithStorage msg model =
     (newModel, cmds) =
       update msg model
   in
-    (newModel
-    , Cmd.batch [ Api.encodeJsonMessage newModel |> setStorage , cmds ]
+    (newModel,Cmd.none
+    {-, Cmd.batch [ Api.encodeJsonMessage newModel |> setStorage , cmds ]-}
     )
  
 -- TASK
-sizeTask = Task.perform Resize Resize Window.size
+sizeTask = Task.perform Resize Window.size
 
 -- SUBSCRIPTION
 subscriptions : Model -> Sub Msg
 subscriptions model =
-  Sub.batch (getSubscribtions model ReceiveMessage Resize Animate)
+  Sub.batch (Api.getSubscribtions model ReceiveMessage Resize)
    
 
 
